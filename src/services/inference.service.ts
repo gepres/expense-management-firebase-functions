@@ -211,4 +211,45 @@ export class InferenceService {
       return [];
     }
   }
+
+  inferCurrency(description: string): string {
+    try {
+      const desc = description.toLowerCase();
+
+      if (desc.includes("dólar") || desc.includes("dolar") || desc.includes("usd") || desc.includes("$")) {
+        return "USD";
+      }
+      if (desc.includes("soles") || desc.includes("sol") || desc.includes("pen")) {
+        return "PEN";
+      }
+
+      functions.logger.info("No currency match found, using default: PEN");
+      return "PEN";
+    } catch (error) {
+      functions.logger.error("Error inferring currency:", error);
+      return "PEN";
+    }
+  }
+
+  inferVoucherType(description: string): string {
+    try {
+      const desc = description.toLowerCase();
+
+      if (desc.includes("factura")) {
+        return "factura";
+      }
+      if (desc.includes("recibo")) {
+        return "recibo";
+      }
+      if (desc.includes("nota de venta") || desc.includes("nota venta")) {
+        return "nota_venta";
+      }
+
+      functions.logger.info("No voucher type match found, using default: boleta");
+      return "boleta";
+    } catch (error) {
+      functions.logger.error("Error inferring voucher type:", error);
+      return "boleta";
+    }
+  }
 }

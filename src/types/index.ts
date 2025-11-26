@@ -34,6 +34,13 @@ export interface ExpenseData {
   categoria: string;
   descripcion: string;
   fecha: string;
+  metodoPago: string;
+  moneda: string;
+  subcategoria: string | null;
+  recurrente: boolean;
+  reimbursementStatus: "pending" | "approved" | "rejected";
+  userId: string;
+  voucherType: string;
 }
 
 export interface AnthropicResponse {

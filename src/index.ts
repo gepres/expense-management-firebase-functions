@@ -167,30 +167,39 @@ async function processImageMessage(
     const inferenceService = new InferenceService();
     const categoryId = await inferenceService.inferCategory(
       user.id,
-      extractionResult.category || extractionResult.description
+      extractionResult.categoria || extractionResult.descripcion
     );
 
     const subcategoryId = await inferenceService.inferSubCategory(
       user.id,
       categoryId,
-      extractionResult.subcategory || extractionResult.description
+      extractionResult.subcategoria || extractionResult.descripcion
     );
+    const voucherType = inferenceService.inferVoucherType(extractionResult.descripcion);
 
     // Map payment method
     let paymentMethodId = "efectivo";
-    const detectedMethod = extractionResult.paymentMethod.toLowerCase();
+    const detectedMethod = extractionResult.metodoPago.toLowerCase();
     if (detectedMethod.includes("yape")) paymentMethodId = "yape";
     else if (detectedMethod.includes("plin")) paymentMethodId = "plin";
     else if (detectedMethod.includes("transferencia")) paymentMethodId = "transferencia";
     else if (detectedMethod.includes("tarjeta")) paymentMethodId = "tarjeta";
 
+
     // Save expense
     const expenseService = new ExpenseService();
-    const saveResult = await expenseService.saveExpense(user.id, {
-      amount: extractionResult.amount,
-      category: categoryId,
-      description: extractionResult.description,
-      date: extractionResult.date,
+    const saveResult = await expenseService.saveExpense({
+      userId: user.id,
+      monto: extractionResult.monto,
+      categoria: categoryId,
+      descripcion: extractionResult.descripcion,
+      fecha: extractionResult.fecha,
+      metodoPago: paymentMethodId,
+      moneda: extractionResult.moneda,
+      subcategoria: subcategoryId,
+      recurrente: false,
+      reimbursementStatus: "pending",
+      voucherType: voucherType,
     });
 
     if (!saveResult.success) {
@@ -205,8 +214,8 @@ async function processImageMessage(
 
     // Send confirmation
     let confirmationMessage = "✅ *Gasto registrado por imagen!*\n\n" +
-      `💰 Monto: S/ ${extractionResult.amount.toFixed(2)}\n` +
-      `📝 Descripción: ${extractionResult.description}\n` +
+      `💰 Monto: ${extractionResult.moneda} ${extractionResult.monto.toFixed(2)}\n` +
+      `📝 Descripción: ${extractionResult.descripcion}\n` +
       `🏷️ Categoría: ${categoryId}\n` +
       `💳 Método: ${paymentMethodId}`;
 
@@ -214,8 +223,8 @@ async function processImageMessage(
       confirmationMessage += `\n📂 Subcategoría: ${subcategoryId}`;
     }
 
-    if (extractionResult.merchant) {
-      confirmationMessage += `\n🏪 Comercio: ${extractionResult.merchant}`;
+    if (extractionResult.comercio) {
+      confirmationMessage += `\n🏪 Comercio: ${extractionResult.comercio}`;
     }
 
     await twilioService.sendMessage(phoneNumber, confirmationMessage);
@@ -302,8 +311,8 @@ async function processTextMessage(
     await registerExpenseFromParsed(
       user,
       phoneNumber,
-      parseResult.expenseData.amount,
-      parseResult.expenseData.description,
+      parseResult.expenseData.monto,
+      parseResult.expenseData.descripcion,
       snap
     );
   } catch (error) {
@@ -342,14 +351,23 @@ async function registerExpenseFromParsed(
     // Infer category, subcategory, and payment method
     const categoryId = await inferenceService.inferCategory(user.id, description);
     const subcategoryId = await inferenceService.inferSubCategory(user.id, categoryId, description);
-
+    const paymentMethodId = await inferenceService.inferPaymentMethod(user.id, description);
+    const currency = inferenceService.inferCurrency(description);
+    const voucherType = inferenceService.inferVoucherType(description);
 
     // Save expense
-    const saveResult = await expenseService.saveExpense(user.id, {
-      amount,
-      category: categoryId,
-      description,
-      date: new Date().toISOString().split("T")[0],
+    const saveResult = await expenseService.saveExpense({
+      userId: user.id,
+      monto: amount,
+      categoria: categoryId,
+      descripcion: description,
+      fecha: new Date().toISOString(),
+      metodoPago: paymentMethodId,
+      moneda: currency,
+      subcategoria: subcategoryId,
+      recurrente: false,
+      reimbursementStatus: "pending",
+      voucherType: voucherType,
     });
 
     if (!saveResult.success) {
@@ -364,9 +382,10 @@ async function registerExpenseFromParsed(
 
     // Send confirmation
     let confirmationMessage = "✅ *Gasto registrado exitosamente!*\n\n" +
-      `💰 Monto: S/ ${amount.toFixed(2)}\n` +
+      `💰 Monto: ${amount.toFixed(2)}\n` +
       `📝 Descripción: ${description}\n` +
-      `🏷️ Categoría: ${categoryId}`;
+      `🏷️ Categoría: ${categoryId}\n` +
+      `💳 Método: ${paymentMethodId}`;
 
     if (subcategoryId) {
       confirmationMessage += `\n📂 Subcategoría: ${subcategoryId}`;

@@ -92,14 +92,14 @@ export class AnthropicService {
       }
 
       return {
-        monto: Number(parsed.amount),
-        comercio: parsed.merchant || "",
-        descripcion: parsed.description || parsed.merchant || "Gasto detectado",
-        fecha: parsed.date || new Date().toISOString().split("T")[0],
-        metodoPago: parsed.paymentMethod?.toLowerCase() || "efectivo",
-        moneda: parsed.currency || "PEN",
-        categoria: parsed.category || "otros",
-        subcategoria: parsed.subcategory || null,
+        monto: Number(parsed.monto),
+        comercio: parsed.comercio || "",
+        descripcion: parsed.descripcion || parsed.comercio || "Gasto detectado",
+        fecha: parsed.fecha || new Date().toISOString().split("T")[0],
+        metodoPago: parsed.metodoPago?.toLowerCase() || "efectivo",
+        moneda: parsed.moneda || "PEN",
+        categoria: parsed.categoria || "otros",
+        subcategoria: parsed.subcategoria || null,
       };
     } catch (error) {
       functions.logger.error("Error extracting receipt data with Anthropic:", error);
@@ -173,7 +173,7 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
         };
       }
 
-      if (!parsed.amount || !parsed.category || !parsed.description) {
+      if (!parsed.monto || !parsed.categoria || !parsed.descripcion) {
         return {
           success: false,
           error: "Respuesta incompleta de Anthropic",
@@ -182,10 +182,17 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
       }
 
       const expenseData: ExpenseData = {
-        monto: Number(parsed.amount),
-        categoria: parsed.category,
-        descripcion: parsed.description,
-        fecha: parsed.date || new Date().toISOString().split("T")[0],
+        userId: "",
+        monto: Number(parsed.monto),
+        categoria: parsed.categoria,
+        descripcion: parsed.descripcion,
+        fecha: parsed.fecha || new Date().toISOString().split("T")[0],
+        metodoPago: "efectivo",
+        moneda: "PEN",
+        subcategoria: null,
+        recurrente: false,
+        reimbursementStatus: "pending",
+        voucherType: "boleta",
       };
 
       return {
