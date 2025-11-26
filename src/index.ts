@@ -7,6 +7,7 @@ import { TwilioService } from "./services/twilio.service";
 import { ExpenseService } from "./services/expense.service";
 import { UserService } from "./services/user.service";
 import { InferenceService } from "./services/inference.service";
+import { TranscriptionService } from "./services/transcription.service";
 import { MessageParser } from "./utils/message-parser";
 import { MediaDownloader } from "./utils/media-downloader";
 
@@ -54,11 +55,19 @@ export const processWhatsAppQueue = functions.firestore
 
       functions.logger.info(`✅ User found: ${user.id}`);
 
-      // Check if message has media (image)
+      // Check if message has media
       const hasMedia = MessageParser.hasMedia(data.webhookBody);
 
       if (hasMedia && data.webhookBody.MediaUrl0) {
-        await processImageMessage(user, phoneNumber, data.webhookBody, snap);
+        const mediaContentType = data.webhookBody.MediaContentType0 || "";
+
+        // Check if it's an audio file
+        if (MediaDownloader.isValidAudioType(mediaContentType)) {
+          await processAudioMessage(user, phoneNumber, data.webhookBody, snap);
+        } else {
+          // Process as image
+          await processImageMessage(user, phoneNumber, data.webhookBody, snap);
+        }
       } else if (message) {
         await processTextMessage(user, phoneNumber, message, snap);
       } else {
@@ -236,6 +245,165 @@ async function processImageMessage(
     await twilioService.sendMessage(
       phoneNumber,
       "❌ Error al procesar la imagen. Por favor intenta de nuevo."
+    );
+    await snap.ref.update({
+      status: "failed",
+      error: error instanceof Error ? error.message : "Unknown error",
+    });
+  }
+}
+
+/**
+ * Process audio messages (voice notes with expense information)
+ * @param {UserData} user - User data
+ * @param {string} phoneNumber - User's phone number
+ * @param {TwilioWebhookBody} webhookBody - Twilio webhook body
+ * @param {FirebaseFirestore.DocumentSnapshot} snap - Firestore document snapshot
+ */
+async function processAudioMessage(
+  user: UserData,
+  phoneNumber: string,
+  webhookBody: TwilioWebhookBody,
+  snap: FirebaseFirestore.DocumentSnapshot
+): Promise<void> {
+  const twilioService = new TwilioService();
+
+  try {
+    await twilioService.sendMessage(phoneNumber, "🎤 Procesando audio...");
+
+    // Download audio from Twilio
+    if (!webhookBody.MediaUrl0) {
+      throw new Error("No media URL found");
+    }
+
+    const mediaResult = await MediaDownloader.downloadTwilioMedia(
+      webhookBody.MediaUrl0
+    );
+
+    if (!mediaResult) {
+      await twilioService.sendMessage(
+        phoneNumber,
+        "❌ No pude descargar el audio. Por favor intenta de nuevo."
+      );
+      await snap.ref.update({ status: "completed", error: "Failed to download audio" });
+      return;
+    }
+
+    if (!MediaDownloader.isValidAudioType(mediaResult.mimeType)) {
+      await twilioService.sendMessage(
+        phoneNumber,
+        "❌ Formato de audio no soportado. Por favor envía un audio válido."
+      );
+      await snap.ref.update({ status: "completed", error: "Invalid audio type" });
+      return;
+    }
+
+    // Transcribe audio using Whisper
+    functions.logger.info("🎤 Transcribing audio with Whisper...");
+    const transcriptionService = new TranscriptionService();
+    const audioBuffer = Buffer.from(mediaResult.base64, "base64");
+    const transcription = await transcriptionService.transcribeAudio(
+      audioBuffer,
+      mediaResult.mimeType
+    );
+
+    if (!transcription) {
+      await twilioService.sendMessage(
+        phoneNumber,
+        "❌ No pude transcribir el audio. Asegúrate de hablar claro y en español."
+      );
+      await snap.ref.update({ status: "completed", error: "Transcription failed" });
+      return;
+    }
+
+    functions.logger.info(`✅ Transcription: ${transcription}`);
+
+    // Process transcription as text message
+    await twilioService.sendMessage(
+      phoneNumber,
+      `📝 Entendí: "${transcription}"\n\n⏳ Procesando...`
+    );
+
+    // Parse expense from transcription using Anthropic
+    const anthropicService = new AnthropicService();
+    const parseResult = await anthropicService.parseExpenseMessage(transcription);
+
+    if (!parseResult.success || !parseResult.expenseData) {
+      await twilioService.sendMessage(
+        phoneNumber,
+        "❌ No pude identificar un gasto en tu audio. Intenta decir algo como:\n" +
+        "\"Gasté 25 soles en almuerzo\" o \"50 en taxi\""
+      );
+      await snap.ref.update({ status: "completed", error: parseResult.error });
+      return;
+    }
+
+    // Infer additional data
+    const inferenceService = new InferenceService();
+    const categoryId = await inferenceService.inferCategory(
+      user.id,
+      parseResult.expenseData.descripcion
+    );
+
+    const subcategoryId = await inferenceService.inferSubCategory(
+      user.id,
+      categoryId,
+      parseResult.expenseData.descripcion
+    );
+
+    const paymentMethodId = await inferenceService.inferPaymentMethod(
+      user.id,
+      transcription
+    );
+
+    const currency = inferenceService.inferCurrency(transcription);
+    const voucherType = inferenceService.inferVoucherType(transcription);
+
+    // Save expense
+    const expenseService = new ExpenseService();
+    const saveResult = await expenseService.saveExpense({
+      userId: user.id,
+      monto: parseResult.expenseData.monto,
+      categoria: categoryId,
+      descripcion: parseResult.expenseData.descripcion,
+      fecha: parseResult.expenseData.fecha,
+      metodoPago: paymentMethodId,
+      moneda: currency,
+      subcategoria: subcategoryId,
+      recurrente: false,
+      reimbursementStatus: "pending",
+      voucherType: voucherType,
+    });
+
+    if (!saveResult.success) {
+      await twilioService.sendMessage(
+        phoneNumber,
+        "❌ Error al guardar el gasto. Por favor intenta de nuevo."
+      );
+      await snap.ref.update({ status: "failed", error: saveResult.error });
+      return;
+    }
+
+    // Send confirmation
+    let confirmationMessage = "✅ *Gasto registrado por audio!*\n\n" +
+      `💰 Monto: ${currency} ${parseResult.expenseData.monto.toFixed(2)}\n` +
+      `📝 Descripción: ${parseResult.expenseData.descripcion}\n` +
+      `🏷️ Categoría: ${categoryId}\n` +
+      `💳 Método: ${paymentMethodId}`;
+
+    if (subcategoryId) {
+      confirmationMessage += `\n📂 Subcategoría: ${subcategoryId}`;
+    }
+
+    await twilioService.sendMessage(phoneNumber, confirmationMessage);
+    await snap.ref.update({ status: "completed" });
+
+    functions.logger.info(`✅ Audio expense processed successfully for user ${user.id}`);
+  } catch (error) {
+    functions.logger.error("Error processing audio message:", error);
+    await twilioService.sendMessage(
+      phoneNumber,
+      "❌ Error al procesar el audio. Por favor intenta de nuevo."
     );
     await snap.ref.update({
       status: "failed",

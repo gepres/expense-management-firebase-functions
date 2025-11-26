@@ -44,4 +44,15 @@ export class MediaDownloader {
     const validTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
     return validTypes.includes(mimeType);
   }
+
+  static isValidAudioType(mimeType: string): boolean {
+    const validTypes = [
+      "audio/ogg",
+      "audio/mpeg",
+      "audio/mp4",
+      "audio/amr",
+      "audio/wav",
+    ];
+    return validTypes.includes(mimeType);
+  }
 }
