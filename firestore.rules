@@ -1,0 +1,40 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Collection: whatsapp_queue
+    // Only Cloud Functions can read/write to the queue
+    // No direct user access allowed
+    match /whatsapp_queue/{queueId} {
+      allow read, write: if false;
+    }
+
+    // Collection: expenses
+    // Only Cloud Functions can write expenses
+    // Users could potentially read their own expenses in future
+    match /expenses/{expenseId} {
+      allow read: if false;  // Change to true for user dashboard access
+      allow write: if false;
+    }
+
+    // Helper function for future authentication
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    // Helper function to check if user owns the data
+    function isOwner(phoneNumber) {
+      return isAuthenticated() &&
+             request.auth.token.phone_number == phoneNumber;
+    }
+
+    // Future: Allow users to read their own expenses
+    // Uncomment when implementing user authentication
+    /*
+    match /expenses/{expenseId} {
+      allow read: if isOwner(resource.data.phoneNumber);
+      allow write: if false;
+    }
+    */
+  }
+}
