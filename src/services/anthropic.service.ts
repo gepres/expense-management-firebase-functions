@@ -18,31 +18,41 @@ export class AnthropicService {
     mimeType: string
   ): Promise<ReceiptExtractionResult | null> {
     try {
-      const prompt = "Analiza esta imagen de un comprobante, recibo o captura de pago (Yape, Plin, etc.) " +
+      const prompt = "Analiza esta imagen de un comprobante, recibo o " +
+        "captura de pago (Yape, Plin, transferencia, etc.) " +
         "y extrae la siguiente información:\n\n" +
         "Debes responder ÚNICAMENTE con un objeto JSON en el siguiente formato:\n" +
         "{\n" +
-        "  \"monto\": número (solo el valor numérico, sin símbolos),\n" +
-        "  \"comercio\": \"nombre del comercio o destinatario\",\n" +
-        "  \"descripcion\": \"descripción breve del producto/servicio\",\n" +
+        "  \"monto\": número (solo el valor numérico, sin símbolos de moneda ni comas),\n" +
+        "  \"comercio\": \"nombre del comercio o destinatario del pago\",\n" +
+        "  \"descripcion\": \"descripción breve del producto/servicio o concepto del pago\",\n" +
         "  \"fecha\": \"fecha en formato YYYY-MM-DD\",\n" +
-        "  \"metodoPago\": \"método de pago (efectivo, yape, plin, tarjeta, transferencia)\",\n" +
-        "  \"moneda\": \"moneda (PEN, USD, etc.)\",\n" +
-        "  \"categoria\": \"categoría inferida (comida, transporte, salud, etc.)\",\n" +
-        "  \"subcategoria\": \"subcategoría si es posible inferir\"\n" +
+        "  \"metodoPago\": \"método de pago detectado " +
+        "(yape, plin, tarjeta, transferencia, efectivo)\",\n" +
+        "  \"moneda\": \"moneda (PEN, USD, EUR, etc.)\",\n" +
+        "  \"categoria\": \"categoría inferida " +
+        "(comida, transporte, salud, entretenimiento, servicios, compras, otros)\",\n" +
+        "  \"subcategoria\": \"subcategoría más específica si es posible inferir, o null\"\n" +
         "}\n\n" +
-        "Si la imagen NO es un comprobante válido o no puedes extraer la información, responde con:\n" +
+        "Si la imagen NO es un comprobante válido o no puedes extraer la información, " +
+        "responde con:\n" +
         "{\n" +
         "  \"error\": \"No se pudo extraer información del comprobante\"\n" +
         "}\n\n" +
-        "IMPORTANTE:\n" +
-        "- Si es captura de Yape/Plin, extrae el monto, destinatario y fecha\n" +
-        "- Si es recibo físico, extrae comercio, monto total y fecha\n" +
-        "- Infiere la categoría basándote en el tipo de comercio o descripción\n" +
-        "- NO incluyas texto adicional, SOLO el objeto JSON";
+        "INSTRUCCIONES ESPECÍFICAS:\n" +
+        "- CAPTURAS DE YAPE/PLIN: Busca el monto enviado/recibido (ej: 'S/ 25.50'), " +
+        "el nombre del destinatario, y la fecha de la transacción\n" +
+        "- RECIBOS/BOLETAS FÍSICAS: Extrae el nombre del comercio, monto total, " +
+        "y fecha de emisión\n" +
+        "- FACTURAS: Similar a recibos, extrae RUC si está visible\n" +
+        "- Si ves el logo o interfaz de Yape, el metodoPago debe ser 'yape'\n" +
+        "- Si ves el logo o interfaz de Plin, el metodoPago debe ser 'plin'\n" +
+        "- Infiere la categoría basándote en el nombre del comercio o descripción del servicio\n" +
+        "- Para el monto, solo devuelve el número sin símbolos: '25.50' no 'S/ 25.50'\n" +
+        "- NO incluyas texto adicional fuera del JSON, SOLO el objeto JSON";
 
       const response = await this.client.messages.create({
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-20250514",
         max_tokens: 1024,
         messages: [{
           role: "user",
@@ -91,6 +101,12 @@ export class AnthropicService {
         return null;
       }
 
+      // Validate required fields
+      if (!parsed.monto) {
+        functions.logger.error("Missing required field 'monto' in parsed data:", parsed);
+        return null;
+      }
+
       return {
         monto: Number(parsed.monto),
         comercio: parsed.comercio || "",
@@ -103,6 +119,12 @@ export class AnthropicService {
       };
     } catch (error) {
       functions.logger.error("Error extracting receipt data with Anthropic:", error);
+      if (error instanceof Error) {
+        functions.logger.error("Error details:", {
+          message: error.message,
+          stack: error.stack,
+        });
+      }
       return null;
     }
   }
@@ -134,7 +156,7 @@ Ejemplos:
 NO incluyas texto adicional, SOLO el objeto JSON.`;
 
       const response = await this.client.messages.create({
-        model: "claude-3-5-sonnet-20241022",
+        model: "claude-sonnet-4-20250514",
         max_tokens: 1024,
         messages: [{
           role: "user",
