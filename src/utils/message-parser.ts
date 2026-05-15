@@ -31,7 +31,20 @@ export class MessageParser {
     return body.trim().toLowerCase();
   }
 
-  static isCommandMessage(message: string): { isCommand: boolean; command?: string } {
+  // Normalización compartida para matching (ROADMAP § C.3):
+  // minúsculas + sin diacríticos + espacios colapsados + trim.
+  static normalizeForMatching(text: string): string {
+    return text
+      .normalize("NFD")
+      .replace(/\p{Diacritic}/gu, "")
+      .toLowerCase()
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  static isCommandMessage(
+    message: string
+  ): { isCommand: boolean; command?: string } {
     const lowerMessage = message.toLowerCase().trim();
 
     const commandMap: Record<string, string> = {
@@ -68,6 +81,76 @@ export class MessageParser {
     if (m === "cuenta principal") return { kind: "primary" };
     const useMatch = m.match(/^usar cuenta\s+(.+)$/);
     if (useMatch) return { kind: "use", nombre: useMatch[1].trim() };
+    return null;
+  }
+
+  // Validación dura de monto (ROADMAP § B.3): > 0, finito, 2 decimales.
+  static validateAmount(
+    amount: number
+  ): { ok: boolean; value?: number; error?: string } {
+    if (typeof amount !== "number" || !Number.isFinite(amount)) {
+      return { ok: false, error: "El monto no es un número válido." };
+    }
+    if (amount <= 0) {
+      return { ok: false, error: "El monto debe ser mayor a 0." };
+    }
+    return { ok: true, value: Math.round(amount * 100) / 100 };
+  }
+
+  // Fecha real del gasto desde el texto (ROADMAP § B.4). Devuelve null si
+  // no hay fecha explícita — el caller usa la fecha del mensaje como
+  // fallback. Solo regex; frases relativas complejas las cubre el LLM.
+  static parseDateFromText(text: string): Date | null {
+    const norm = MessageParser.normalizeForMatching(text);
+    const now = new Date();
+    const atMessageTime = (d: Date): Date => {
+      d.setHours(now.getHours(), now.getMinutes(), now.getSeconds(), 0);
+      return d;
+    };
+
+    if (/\bhoy\b/.test(norm)) return atMessageTime(new Date());
+    if (/\bayer\b/.test(norm) && !/\bantes de ayer\b/.test(norm)) {
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      return atMessageTime(d);
+    }
+    if (/\banteayer\b|\bantes de ayer\b/.test(norm)) {
+      const d = new Date();
+      d.setDate(d.getDate() - 2);
+      return atMessageTime(d);
+    }
+
+    const iso = norm.match(/\b(\d{4})-(\d{2})-(\d{2})\b/);
+    if (iso) {
+      const d = new Date(+iso[1], +iso[2] - 1, +iso[3]);
+      return isNaN(d.getTime()) ? null : atMessageTime(d);
+    }
+
+    const dmy = norm.match(/\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b/);
+    if (dmy) {
+      const d = new Date(+dmy[3], +dmy[2] - 1, +dmy[1]);
+      return isNaN(d.getTime()) ? null : atMessageTime(d);
+    }
+
+    const meses: Record<string, number> = {
+      enero: 0, febrero: 1, marzo: 2, abril: 3, mayo: 4, junio: 5,
+      julio: 6, agosto: 7, septiembre: 8, setiembre: 8, octubre: 9,
+      noviembre: 10, diciembre: 11,
+    };
+    const mesesAlt = Object.keys(meses).join("|");
+    const elNde = norm.match(
+      new RegExp(`\\bel (\\d{1,2}) de (${mesesAlt})\\b`)
+    );
+    if (elNde) {
+      const day = +elNde[1];
+      const month = meses[elNde[2]];
+      const d = new Date(now.getFullYear(), month, day);
+      if (d.getTime() > now.getTime()) {
+        d.setFullYear(now.getFullYear() - 1);
+      }
+      return isNaN(d.getTime()) ? null : atMessageTime(d);
+    }
+
     return null;
   }
 

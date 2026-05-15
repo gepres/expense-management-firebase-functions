@@ -1,5 +1,6 @@
 import axios from "axios";
 import * as functions from "firebase-functions/v1";
+import { isValidAudioType, isValidImageType } from "./media-types";
 
 export class MediaDownloader {
   static async downloadTwilioMedia(
@@ -41,18 +42,10 @@ export class MediaDownloader {
   }
 
   static isValidImageType(mimeType: string): boolean {
-    const validTypes = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-    return validTypes.includes(mimeType);
+    return isValidImageType(mimeType);
   }
 
   static isValidAudioType(mimeType: string): boolean {
-    const validTypes = [
-      "audio/ogg",
-      "audio/mpeg",
-      "audio/mp4",
-      "audio/amr",
-      "audio/wav",
-    ];
-    return validTypes.includes(mimeType);
+    return isValidAudioType(mimeType);
   }
 }

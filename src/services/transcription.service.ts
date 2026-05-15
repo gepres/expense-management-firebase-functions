@@ -3,6 +3,7 @@ import * as functions from "firebase-functions/v1";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
+import { audioExtensionFor } from "../utils/media-types";
 
 export class TranscriptionService {
   private client: OpenAI;
@@ -54,25 +55,6 @@ export class TranscriptionService {
   }
 
   private getExtensionFromMimeType(mimeType: string): string {
-    const mimeToExt: { [key: string]: string } = {
-      "audio/ogg": "ogg",
-      "audio/mpeg": "mp3",
-      "audio/mp4": "mp4",
-      "audio/amr": "amr",
-      "audio/wav": "wav",
-    };
-
-    return mimeToExt[mimeType] || "ogg";
-  }
-
-  static isValidAudioType(mimeType: string): boolean {
-    const validTypes = [
-      "audio/ogg",
-      "audio/mpeg",
-      "audio/mp4",
-      "audio/amr",
-      "audio/wav",
-    ];
-    return validTypes.includes(mimeType);
+    return audioExtensionFor(mimeType);
   }
 }

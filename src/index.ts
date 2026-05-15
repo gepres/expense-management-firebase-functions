@@ -1,13 +1,14 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { Timestamp } from "firebase-admin/firestore";
-import { WhatsAppQueueDocument, UserData, TwilioWebhookBody, Account } from "./types";
+import { WhatsAppQueueDocument, UserData, TwilioWebhookBody, Account, LearningSource } from "./types";
 import { AnthropicService } from "./services/anthropic.service";
 import { TwilioService } from "./services/twilio.service";
 import { ExpenseService } from "./services/expense.service";
 import { UserService } from "./services/user.service";
 import { AccountService } from "./services/account.service";
 import { InferenceService } from "./services/inference.service";
+import { LearningLogService } from "./services/learning-log.service";
 import { TranscriptionService } from "./services/transcription.service";
 import { MessageParser } from "./utils/message-parser";
 import { MediaDownloader } from "./utils/media-downloader";
@@ -182,80 +183,36 @@ async function processImageMessage(
 
     functions.logger.info("✅ Extraction successful:", extractionResult);
 
-    // Infer category and subcategory from user's data
-    const inferenceService = new InferenceService();
-    const categoryId = await inferenceService.inferCategory(
-      user.id,
-      extractionResult.categoria || extractionResult.descripcion
-    );
+    // Receipt date is explicit document data extracted by Vision (LLM).
+    let fechaExplicitISO: string | undefined;
+    if (extractionResult.fecha) {
+      const d = new Date(extractionResult.fecha);
+      if (!isNaN(d.getTime())) fechaExplicitISO = d.toISOString();
+    }
 
-    const subcategoryId = await inferenceService.inferSubCategory(
-      user.id,
-      categoryId,
-      extractionResult.subcategoria || extractionResult.descripcion
-    );
-    const voucherType = inferenceService.inferVoucherType(extractionResult.descripcion);
+    const classifyText = [
+      extractionResult.descripcion,
+      extractionResult.categoria,
+      extractionResult.comercio,
+    ]
+      .filter(Boolean)
+      .join(" ");
 
-    // Map payment method
-    let paymentMethodId = "efectivo";
-    const detectedMethod = extractionResult.metodoPago.toLowerCase();
-    if (detectedMethod.includes("yape")) paymentMethodId = "yape";
-    else if (detectedMethod.includes("plin")) paymentMethodId = "plin";
-    else if (detectedMethod.includes("transferencia")) paymentMethodId = "transferencia";
-    else if (detectedMethod.includes("tarjeta")) paymentMethodId = "tarjeta";
-
-
-    // Receipt currency is explicit document data; fall back to account
-    const moneda = extractionResult.moneda || account.moneda;
-    const currencySource = extractionResult.moneda ? "text" : "account";
-
-    // Save expense
-    const expenseService = new ExpenseService();
-    const saveResult = await expenseService.saveExpense({
-      userId: user.id,
-      accountId: account.id,
-      monto: extractionResult.monto,
-      categoria: categoryId,
-      descripcion: extractionResult.descripcion,
-      fecha: extractionResult.fecha,
-      metodoPago: paymentMethodId,
-      moneda: moneda,
-      currencySource: currencySource,
-      subcategoria: subcategoryId,
-      recurrente: false,
-      reimbursementStatus: "pending",
-      voucherType: voucherType,
+    await finalizeAndRegisterExpense({
+      user,
+      account,
+      phoneNumber,
+      snap,
+      channel: "image",
+      rawText: classifyText,
+      description: extractionResult.descripcion,
+      amount: extractionResult.monto,
+      successTitle: "✅ *Gasto registrado por imagen!*",
+      explicitCurrency: extractionResult.moneda || undefined,
+      paymentHint: extractionResult.metodoPago,
+      fechaExplicitISO: fechaExplicitISO,
+      comercio: extractionResult.comercio,
     });
-
-    if (!saveResult.success) {
-      functions.logger.error("Failed to save expense:", saveResult.error);
-      await twilioService.sendMessage(
-        phoneNumber,
-        "❌ Error al guardar el gasto. Por favor intenta de nuevo."
-      );
-      await snap.ref.update({ status: "failed", error: saveResult.error });
-      return;
-    }
-
-    // Send confirmation
-    let confirmationMessage = "✅ *Gasto registrado por imagen!*\n\n" +
-      `💰 Monto: ${moneda} ${extractionResult.monto.toFixed(2)}\n` +
-      `📝 Descripción: ${extractionResult.descripcion}\n` +
-      `🏷️ Categoría: ${categoryId}\n` +
-      `💳 Método: ${paymentMethodId}`;
-
-    if (subcategoryId) {
-      confirmationMessage += `\n📂 Subcategoría: ${subcategoryId}`;
-    }
-
-    if (extractionResult.comercio) {
-      confirmationMessage += `\n🏪 Comercio: ${extractionResult.comercio}`;
-    }
-
-    await twilioService.sendMessage(phoneNumber, confirmationMessage);
-    await snap.ref.update({ status: "completed" });
-
-    functions.logger.info(`✅ Image expense processed successfully for user ${user.id}`);
   } catch (error) {
     functions.logger.error("Error processing image message:", error);
     await twilioService.sendMessage(
@@ -356,70 +313,17 @@ async function processAudioMessage(
       return;
     }
 
-    // Infer additional data
-    const inferenceService = new InferenceService();
-    const categoryId = await inferenceService.inferCategory(
-      user.id,
-      parseResult.expenseData.descripcion
-    );
-
-    const subcategoryId = await inferenceService.inferSubCategory(
-      user.id,
-      categoryId,
-      parseResult.expenseData.descripcion
-    );
-
-    const paymentMethodId = await inferenceService.inferPaymentMethod(
-      user.id,
-      transcription
-    );
-
-    const { moneda: currency, source: currencySource } =
-      inferenceService.resolveCurrency(transcription, account.moneda);
-    const voucherType = inferenceService.inferVoucherType(transcription);
-
-    // Save expense
-    const expenseService = new ExpenseService();
-    const saveResult = await expenseService.saveExpense({
-      userId: user.id,
-      accountId: account.id,
-      monto: parseResult.expenseData.monto,
-      categoria: categoryId,
-      descripcion: parseResult.expenseData.descripcion,
-      fecha: parseResult.expenseData.fecha,
-      metodoPago: paymentMethodId,
-      moneda: currency,
-      currencySource: currencySource,
-      subcategoria: subcategoryId,
-      recurrente: false,
-      reimbursementStatus: "pending",
-      voucherType: voucherType,
+    await finalizeAndRegisterExpense({
+      user,
+      account,
+      phoneNumber,
+      snap,
+      channel: "audio",
+      rawText: transcription,
+      description: parseResult.expenseData.descripcion,
+      amount: parseResult.expenseData.monto,
+      successTitle: "✅ *Gasto registrado por audio!*",
     });
-
-    if (!saveResult.success) {
-      await twilioService.sendMessage(
-        phoneNumber,
-        "❌ Error al guardar el gasto. Por favor intenta de nuevo."
-      );
-      await snap.ref.update({ status: "failed", error: saveResult.error });
-      return;
-    }
-
-    // Send confirmation
-    let confirmationMessage = "✅ *Gasto registrado por audio!*\n\n" +
-      `💰 Monto: ${currency} ${parseResult.expenseData.monto.toFixed(2)}\n` +
-      `📝 Descripción: ${parseResult.expenseData.descripcion}\n` +
-      `🏷️ Categoría: ${categoryId}\n` +
-      `💳 Método: ${paymentMethodId}`;
-
-    if (subcategoryId) {
-      confirmationMessage += `\n📂 Subcategoría: ${subcategoryId}`;
-    }
-
-    await twilioService.sendMessage(phoneNumber, confirmationMessage);
-    await snap.ref.update({ status: "completed" });
-
-    functions.logger.info(`✅ Audio expense processed successfully for user ${user.id}`);
   } catch (error) {
     functions.logger.error("Error processing audio message:", error);
     await twilioService.sendMessage(
@@ -479,7 +383,8 @@ async function processTextMessage(
         phoneNumber,
         parsedExpense.amount,
         parsedExpense.description,
-        snap
+        snap,
+        message
       );
       return;
     }
@@ -514,7 +419,8 @@ async function processTextMessage(
       phoneNumber,
       parseResult.expenseData.monto,
       parseResult.expenseData.descripcion,
-      snap
+      snap,
+      message
     );
   } catch (error) {
     functions.logger.error("Error processing text message:", error);
@@ -530,13 +436,187 @@ async function processTextMessage(
 }
 
 /**
- * Register expense from parsed data
+ * Maps a classification matchedLevel to a learning_log decision source.
+ * @param {string} level - matchedLevel from classify()
+ * @return {LearningSource} learning_log source
+ */
+function levelToSource(level: string): LearningSource {
+  if (level === "history") return "history";
+  if (level === "default") return "default";
+  return "regex";
+}
+
+interface FinalizeArgs {
+  user: UserData;
+  account: Account;
+  phoneNumber: string;
+  snap: FirebaseFirestore.DocumentSnapshot;
+  channel: "text" | "image" | "audio";
+  rawText: string;
+  description: string;
+  amount: number;
+  successTitle: string;
+  explicitCurrency?: string;
+  paymentHint?: string;
+  fechaExplicitISO?: string;
+  comercio?: string;
+}
+
+/**
+ * Shared expense finalization: validate amount, classify, resolve payment /
+ * currency / date, persist (expense + movement + saldo), log the decision
+ * to learning_log and confirm to the user. ROADMAP § B.3–B.6 + § G.
+ * @param {FinalizeArgs} args - Finalization arguments
+ * @return {Promise<void>} resolves when done
+ */
+async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
+  const twilioService = new TwilioService();
+  const inferenceService = new InferenceService();
+  const expenseService = new ExpenseService();
+  const learningLog = new LearningLogService();
+  const { user, account, phoneNumber, snap } = args;
+
+  const matchText = args.rawText || args.description;
+
+  const amountCheck = MessageParser.validateAmount(args.amount);
+  if (!amountCheck.ok || amountCheck.value === undefined) {
+    await twilioService.sendMessage(
+      phoneNumber,
+      `❌ ${amountCheck.error}\n\nEjemplo: "50 almuerzo"`
+    );
+    await snap.ref.update({ status: "completed", error: amountCheck.error });
+    return;
+  }
+  const monto = amountCheck.value;
+
+  const queueDoc = snap.data() as WhatsAppQueueDocument;
+  const messageSid = queueDoc?.webhookBody?.MessageSid;
+  const messageDate = queueDoc?.createdAt ?
+    queueDoc.createdAt.toDate() :
+    new Date();
+
+  const classification = await inferenceService.classify(
+    user.id,
+    matchText
+  );
+  const payment = await inferenceService.resolvePaymentMethod(
+    user.id,
+    matchText,
+    args.paymentHint
+  );
+
+  const currency = args.explicitCurrency ?
+    { moneda: args.explicitCurrency, source: "text" as const } :
+    inferenceService.resolveCurrency(matchText, account.moneda);
+
+  let fechaISO: string;
+  let dateSource: "regex" | "llm" | "message";
+  if (args.fechaExplicitISO) {
+    fechaISO = args.fechaExplicitISO;
+    dateSource = "llm";
+  } else {
+    const parsed = MessageParser.parseDateFromText(matchText);
+    if (parsed) {
+      fechaISO = parsed.toISOString();
+      dateSource = "regex";
+    } else {
+      fechaISO = messageDate.toISOString();
+      dateSource = "message";
+    }
+  }
+
+  const voucherType = inferenceService.inferVoucherType(matchText);
+
+  const saveResult = await expenseService.saveExpense({
+    userId: user.id,
+    accountId: account.id,
+    monto: monto,
+    categoria: classification.categoria,
+    descripcion: args.description,
+    fecha: fechaISO,
+    metodoPago: payment.metodoPago,
+    moneda: currency.moneda,
+    subcategoria: classification.subcategoria,
+    recurrente: false,
+    reimbursementStatus: "pending",
+    voucherType: voucherType,
+    matchedTerm: classification.matchedTerm,
+    matchedLevel: classification.matchedLevel,
+    currencySource: currency.source,
+    dateSource: dateSource,
+    paymentMethodSource: payment.source,
+    needsClassification: classification.needsClassification,
+    needsReview: payment.needsReview,
+    messageSid: messageSid,
+  });
+
+  if (!saveResult.success) {
+    functions.logger.error("Failed to save expense:", saveResult.error);
+    await twilioService.sendMessage(
+      phoneNumber,
+      "❌ Error al registrar el gasto. Por favor intenta de nuevo."
+    );
+    await snap.ref.update({ status: "failed", error: saveResult.error });
+    return;
+  }
+
+  await learningLog.append(user.id, {
+    expenseId: saveResult.expenseId,
+    type: "classification",
+    input: {
+      raw: matchText,
+      normalized: MessageParser.normalizeForMatching(matchText),
+      channel: args.channel,
+    },
+    decision: {
+      field: "categoria",
+      value: classification.categoria,
+      source: levelToSource(classification.matchedLevel),
+      matchedTerm: classification.matchedTerm ?? undefined,
+    },
+  });
+
+  let msg = `${args.successTitle}\n\n` +
+    `💰 Monto: ${currency.moneda} ${monto.toFixed(2)}\n` +
+    `📝 Descripción: ${args.description}\n` +
+    `🏷️ Categoría: ${classification.categoria}\n` +
+    `💳 Método: ${payment.metodoPago}`;
+  if (classification.subcategoria) {
+    msg += `\n📂 Subcategoría: ${classification.subcategoria}`;
+  }
+  if (args.comercio) {
+    msg += `\n🏪 Comercio: ${args.comercio}`;
+  }
+  if (saveResult.saldoNuevo !== undefined) {
+    msg += `\n🧮 Saldo ${account.nombre}: ` +
+      `${currency.moneda} ${saveResult.saldoNuevo.toFixed(2)}`;
+  }
+  if (classification.needsClassification) {
+    msg += "\n\n⚠️ No pude clasificar este gasto. " +
+      "Quedó como *sin_clasificar*; puedes crear la categoría/subcategoría " +
+      "o escribir \"pendientes\" para clasificarlo después.";
+  }
+  if (payment.needsReview) {
+    msg += "\n\n⚠️ No reconocí el método de pago; quedó como *otro*. " +
+      "Revísalo o créalo en tus métodos de pago.";
+  }
+
+  await twilioService.sendMessage(phoneNumber, msg);
+  await snap.ref.update({ status: "completed" });
+  functions.logger.info(
+    `✅ ${args.channel} expense ${saveResult.expenseId} for user ${user.id}`
+  );
+}
+
+/**
+ * Register expense from parsed text/regex/Anthropic data
  * @param {UserData} user - User data
  * @param {Account} account - Active account
  * @param {string} phoneNumber - User's phone number
  * @param {number} amount - Expense amount
  * @param {string} description - Expense description
  * @param {FirebaseFirestore.DocumentSnapshot} snap - Firestore document snapshot
+ * @param {string} rawText - Original message text
  */
 async function registerExpenseFromParsed(
   user: UserData,
@@ -544,66 +624,23 @@ async function registerExpenseFromParsed(
   phoneNumber: string,
   amount: number,
   description: string,
-  snap: FirebaseFirestore.DocumentSnapshot
+  snap: FirebaseFirestore.DocumentSnapshot,
+  rawText: string
 ): Promise<void> {
-  const twilioService = new TwilioService();
-  const inferenceService = new InferenceService();
-  const expenseService = new ExpenseService();
-
   try {
-    // Infer category, subcategory, and payment method
-    const categoryId = await inferenceService.inferCategory(user.id, description);
-    const subcategoryId = await inferenceService.inferSubCategory(user.id, categoryId, description);
-    const paymentMethodId = await inferenceService.inferPaymentMethod(user.id, description);
-    const { moneda: currency, source: currencySource } =
-      inferenceService.resolveCurrency(description, account.moneda);
-    const voucherType = inferenceService.inferVoucherType(description);
-
-    // Save expense
-    const saveResult = await expenseService.saveExpense({
-      userId: user.id,
-      accountId: account.id,
-      monto: amount,
-      categoria: categoryId,
-      descripcion: description,
-      fecha: new Date().toISOString(),
-      metodoPago: paymentMethodId,
-      moneda: currency,
-      currencySource: currencySource,
-      subcategoria: subcategoryId,
-      recurrente: false,
-      reimbursementStatus: "pending",
-      voucherType: voucherType,
+    await finalizeAndRegisterExpense({
+      user,
+      account,
+      phoneNumber,
+      snap,
+      channel: "text",
+      rawText: rawText,
+      description: description,
+      amount: amount,
+      successTitle: "✅ *Gasto registrado exitosamente!*",
     });
-
-    if (!saveResult.success) {
-      functions.logger.error("Failed to save expense:", saveResult.error);
-      await twilioService.sendMessage(
-        phoneNumber,
-        "❌ Error al registrar el gasto. Por favor intenta de nuevo."
-      );
-      await snap.ref.update({ status: "failed", error: saveResult.error });
-      return;
-    }
-
-    // Send confirmation
-    let confirmationMessage = "✅ *Gasto registrado exitosamente!*\n\n" +
-      `💰 Monto: ${amount.toFixed(2)}\n` +
-      `📝 Descripción: ${description}\n` +
-      `🏷️ Categoría: ${categoryId}\n` +
-      `💳 Método: ${paymentMethodId}`;
-
-    if (subcategoryId) {
-      confirmationMessage += `\n📂 Subcategoría: ${subcategoryId}`;
-    }
-
-    confirmationMessage += "\n\nEscribe \"resumen\" para ver tus gastos.";
-
-    await twilioService.sendMessage(phoneNumber, confirmationMessage);
-    await snap.ref.update({ status: "completed" });
-
-    functions.logger.info(`✅ Text expense processed successfully for user ${user.id}`);
   } catch (error) {
+    const twilioService = new TwilioService();
     functions.logger.error("Error registering expense:", error);
     await twilioService.sendMessage(
       phoneNumber,
