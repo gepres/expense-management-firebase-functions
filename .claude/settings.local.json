@@ -22,7 +22,15 @@
       "Bash(echo \"TEST_EXIT=$?\")",
       "Bash(git add *)",
       "Bash(git commit -m 'feat:  webhook Twilio en local: bypass de firma en emulador + seed --phone + docs' -m '- validateTwilioRequest omite la firma cuando FUNCTIONS_EMULATOR=true: el *)",
-      "Bash(git commit -m 'fix:  parseBotCommand conserva mayúsculas del ID en clasificar' -m 'Los IDs de documento de Firestore son case-sensitive, pero parseBotCommand *)"
+      "Bash(git commit -m 'fix:  parseBotCommand conserva mayúsculas del ID en clasificar' -m 'Los IDs de documento de Firestore son case-sensitive, pero parseBotCommand *)",
+      "Bash(git commit -m 'feat:  clasificación E+C — historial por similitud + LLM acotado a taxonomía' -m 'E \\(sin costo API\\): paso 4 de classify elige la entrada de learning_log *)",
+      "Bash(git commit -m 'chore:  seed con categoría Transporte para validar el paso 5 \\(LLM acotado\\)' -m ''\\\\''taxi'\\\\'' deliberadamente fuera de nombres/suggestions: fuerza el miss de *)",
+      "Bash(firebase deploy *)",
+      "Bash(firebase functions:list *)",
+      "Bash(firebase functions:delete *)",
+      "Bash(curl -s --max-time 30 https://healthcheck-xo244tcjca-uc.a.run.app)",
+      "Bash(git commit -m 'docs:  reconciliar flujo Twilio — twilioWebhook es la ingestión activa en prod' -m 'Twilio apunta a twilioWebhook \\(Firebase, 2ª gen\\) desde 2026-05-15, no al *)",
+      "Bash(git commit -m 'fix:  validar firma Twilio contra TWILIO_WEBHOOK_URL \\(Cloud Run v2 strip-ea el path\\)' -m 'En Functions v2 \\(Cloud Run, alias cloudfunctions.net/twilioWebhook\\) el *)"
     ]
   }
 }
