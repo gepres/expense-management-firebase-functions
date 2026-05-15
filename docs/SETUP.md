@@ -182,14 +182,9 @@ https://us-central1-<proyecto>.cloudfunctions.net/twilioWebhook
 
 ## Paso 10 — Índices de Firestore
 
-Los índices compuestos están declarados en `firestore.indexes.json` y enlazados desde `firebase.json`. Publicarlos:
+> ⚠️ **Firestore rules/indexes NO se gestionan en este repo.** El proyecto Firebase `expense-app-gepres` es compartido con el web app `D:\PROYECTOS\gepres\gastos`, **dueño único** de `firestore.rules` y `firestore.indexes.json`. Este repo ya no tiene esos archivos ni bloque `firestore` en `firebase.json`. Los índices que el bot necesita **ya están fusionados** en `gastos/firestore.indexes.json`. Para deployarlos/cambiarlos: `cd D:\PROYECTOS\gepres\gastos && firebase deploy --only firestore`. (Razón: deployar las rules deny-all de este repo machacó las del web app y rompió el login — ver §11.)
 
-```bash
-firebase deploy --only firestore:indexes
-firebase deploy --only firestore:rules
-```
-
-Índices incluidos:
+Índices que requiere el bot (ya presentes en el archivo canónico de `gastos`):
 
 | Colección       | Campos                                      | Usado por                  |
 |-----------------|---------------------------------------------|----------------------------|
@@ -216,26 +211,11 @@ Crea la cuenta `Principal` (PEN, saldo 0) para cada usuario y asigna `accountId`
 
 ---
 
-## Paso 11 — Reglas de Firestore
+## Paso 11 — Reglas de Firestore (las gestiona el proyecto `gastos`)
 
-Versión actual (`firestore.rules`): bloquea acceso directo a `whatsapp_queue` y `expenses`. Solo Cloud Functions (admin SDK) pueden escribir.
+Las `firestore.rules` de producción son las del web app: `D:\PROYECTOS\gepres\gastos\firestore.rules` (auth-based: cada usuario lee lo suyo, accounts, transfers, shared_groups, etc.; `whatsapp_queue` → `if false`). El bot usa **Admin SDK**, que **salta** las security rules, así que esas reglas no lo afectan.
 
-```javascript
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /whatsapp_queue/{queueId} {
-      allow read, write: if false;
-    }
-    match /expenses/{expenseId} {
-      allow read: if false;     // habilitar para dashboard
-      allow write: if false;
-    }
-  }
-}
-```
-
-Para el dashboard futuro: leer `expenses` solo si `request.auth.uid == resource.data.userId`.
+**No deployar reglas desde este repo** (ya no tiene `firestore.rules`). Cambios de reglas → editar y deployar desde `D:\PROYECTOS\gepres\gastos`. Un deploy de las reglas restrictivas de este repo rompería el acceso de cliente del web app (incidente real 2026-05-15).
 
 ---
 

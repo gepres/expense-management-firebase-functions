@@ -163,7 +163,7 @@ Secrets v2 (`defineSecret` en `index.ts`) bindeados a `processWhatsAppQueue`; en
 
 ## Reglas de seguridad
 
-`firestore.rules` bloquea acceso directo a `whatsapp_queue` y `expenses` (`allow read, write: if false`). Solo el SDK admin (las funciones) puede leer/escribir.
+Las `firestore.rules` de producción **las gestiona el web app** `D:\PROYECTOS\gepres\gastos` (este repo ya no tiene ese archivo). Esas reglas son auth-based (cada usuario lee lo suyo) y dejan `whatsapp_queue` en `if false`. El bot usa el **SDK admin**, que salta las reglas, así que opera con normalidad. No deployar Firestore desde este repo (ver `CLAUDE.md` §7 / `SETUP.md` §10-11).
 
 Para el dashboard futuro, abrir `expenses.read` con `request.auth.uid == resource.data.userId`.
 

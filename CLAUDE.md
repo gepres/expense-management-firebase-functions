@@ -89,7 +89,7 @@ Resolución: `defineSecret` en `index.ts` → bindeado a la función → `proces
 
 ## 7. Trampas conocidas
 
-- **Índices Firestore obligatorios:** las queries de `movements` (`accountId`+`fecha`), `learning_log` (`type`+`tokens` array-contains), `expenses` (`userId`+`createdAt`, `userId`+`fecha`, `userId`+`needsClassification`, `userId`+`needsReview`) requieren los índices de `firestore.indexes.json`. Desplegarlos con `firebase deploy --only firestore:indexes` **antes** de usar `pendientes`/`movimientos`/resumen por mes.
+- **Firestore rules/indexes NO se gestionan en este repo.** El proyecto Firebase `expense-app-gepres` es **compartido** con el web app `D:\PROYECTOS\gepres\gastos`, que es el **dueño único** de `firestore.rules` y `firestore.indexes.json`. Este repo ya **no** tiene esos archivos ni bloque `firestore` en `firebase.json` (un deploy desde aquí no puede tocar Firestore — protección tras un incidente: deployar las rules deny-all de este repo rompió el login del web app). Las queries del bot (`movements` `accountId`+`fecha`; `learning_log` `type`+`tokens`; `expenses` `userId`+`createdAt`/`fecha`/`needsClassification`/`needsReview`/`amountFlagged`) requieren índices que **ya están fusionados** en `gastos/firestore.indexes.json`. Para añadir/cambiar un índice o regla: editar y deployar **desde `D:\PROYECTOS\gepres\gastos`** (`firebase deploy --only firestore` allí), nunca desde aquí.
 - **Migración previa al deploy:** correr `npm run backfill:accounts` una vez (idempotente). Sin `accountId` los expenses históricos no aparecen en queries por cuenta. El ledger arranca en cero (no se reproducen movements históricos) — el saldo real lo fija el usuario con `ingreso`/`ajustar`.
 - **Idempotencia depende de `MessageSid`:** `finalize` salta duplicados solo si `webhookBody.MessageSid` está presente en el doc de `whatsapp_queue`. Si el Phase 1 externo no lo guarda, no hay protección anti-duplicado.
 - **Firma de Twilio omitida en emulador:** el emulador sirve la función bajo `/<project>/<region>/<fn>` y strip-ea ese prefijo → `req.url` llega como `/`, así que la URL reconstruida nunca coincide con la que Twilio firmó (URL completa) → firma siempre inválida en local. `validateTwilioRequest` (`src/utils/twilio-webhook.ts`) retorna `true` si `process.env.FUNCTIONS_EMULATOR === "true"` (esa env solo existe en el emulador, jamás en prod; en prod Cloud Run sirve la fn en la raíz y la firma se valida normal). Es un bypass de auth gateado a local — al probar con WhatsApp real vía túnel se ve el warning `validación de firma OMITIDA (emulador)`. Ver `docs/SETUP.md` §8.1.
@@ -135,7 +135,7 @@ npm run serve              # build + emuladores
 npm run deploy             # firebase deploy --only functions
 npm run backfill:accounts  # migración accountId (idempotente; requiere ADC)
 npm run logs               # tail logs producción
-firebase deploy --only firestore:indexes   # publicar índices
-firebase deploy --only firestore:rules     # publicar reglas
 firebase functions:secrets:set <NAME>      # setear un secret v2
 ```
+
+> Firestore rules/indexes **NO** se deployan desde este repo (ver §7). Dueño: `D:\PROYECTOS\gepres\gastos` → `cd` allí y `firebase deploy --only firestore`.

@@ -310,7 +310,7 @@ Optimizaciones pendientes en el roadmap (ver `ARCHITECTURE.md`):
 
 - Sanitización de input (`MessageParser.sanitizeInput`: strip `<script>`, `<`, `>`; trim a 500 chars).
 - Normalización de teléfono antes de match.
-- `firestore.rules` bloquea acceso directo a `whatsapp_queue` y `expenses`.
+- Las `firestore.rules` (gestionadas por el web app `gastos`) bloquean `whatsapp_queue`; el bot usa Admin SDK (salta reglas).
 - Las credenciales son secrets v2 (`defineSecret`), expuestas como `process.env.<NAME>` en runtime; no hay claves en código.
 
 ---

@@ -81,8 +81,7 @@ gastos-firebase-functions/
 │       ├── message-parser.ts             # Normalización, regex, comandos
 │       └── media-downloader.ts           # Descarga autenticada de Twilio media
 ├── docs/                                 # Documentación extendida (ver más abajo)
-├── firebase.json
-├── firestore.rules
+├── firebase.json                         # solo functions + emuladores (sin firestore)
 ├── .firebaserc
 ├── package.json
 └── tsconfig.json
