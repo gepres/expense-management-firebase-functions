@@ -248,8 +248,10 @@ Migrado a Functions v2 + `defineSecret`. Los services leen `process.env.<NAME>`.
 ### 6. ~~Phase 1 acoplada~~ (resuelto)
 Webhook absorbido: `twilioWebhook` (HTTPS v2) encola en `whatsapp_queue`. Ya no hay sistema externo.
 
-### 7. ~~Validación del webhook de Twilio~~ (resuelto)
+### 7. ~~Validación del webhook de Twilio~~ (resuelto + ACTIVO en prod)
 `twilioWebhook` valida `X-Twilio-Signature` con `TWILIO_AUTH_TOKEN` (403 si falla). Gotcha: la firma depende de la URL exacta — con dominio custom/proxy, `Host`/`X-Forwarded-Host` debe coincidir con lo configurado en Twilio. **En el emulador la validación se omite a propósito** (`FUNCTIONS_EMULATOR==="true"`): el emulador strip-ea el prefijo de ruta y la URL reconstruida nunca coincide con la firmada. Solo aplica en local; en prod se valida normal (`SETUP.md` §8.1).
+
+**Desde 2026-05-15 `twilioWebhook` es la ingestión ACTIVA en producción** (`https://us-central1-expense-app-gepres.cloudfunctions.net/twilioWebhook`, 2ª gen). Antes Twilio apuntaba al webhook NestJS/Vercel (`gastos-backend`), que **no** validaba firma — ahora queda como rollback sin tráfico. Caveat de idempotencia: `twilioWebhook` encola con `.add()` (ID autogenerado), no con `MessageSid` como ID; un reintento de Twilio crea 2 docs en la cola → 2 ejecuciones, pero el gasto no se duplica (idempotencia por `messageSid` en `finalizeAndRegisterExpense`; el reintento responde "ya estaba registrado"). Posible mejora: `.doc(MessageSid).set()` para paridad con el productor de rollback. Fuente cruzada: `gastos-backend/WHATSAPP_FLOW.md`.
 
 ### 8. Lecturas redundantes de categorías
 Cada mensaje hace una lectura completa de `users/{uid}/categories` y posiblemente otra de `payment_methods`. Cache simple por invocación (Map en memoria) reduciría costo en bursts.

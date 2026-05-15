@@ -6,6 +6,8 @@ Este archivo orienta a futuras sesiones de Claude Code dentro de **gastos-fireba
 
 Asistente de gastos por WhatsApp. `twilioWebhook` (HTTPS, valida `X-Twilio-Signature`) recibe el mensaje y lo encola en `whatsapp_queue`; `processWhatsAppQueue` (`onDocumentCreated`) lo procesa (texto, imagen o audio), infiere categoría/método/moneda/cuenta y guarda el gasto en `expenses`. Responde por WhatsApp vía Twilio. El "Phase 1" externo ya está absorbido en este repo.
 
+> **Ingestión activa (desde 2026-05-15):** Twilio apunta a `twilioWebhook` de este repo en producción (`https://us-central1-expense-app-gepres.cloudfunctions.net/twilioWebhook`, 2ª gen). El webhook NestJS/Vercel (`gastos-backend` `POST /api/whatsapp/webhook`) queda como **rollback** sin tráfico y **sin** validación de firma. Caveat: `twilioWebhook` encola con `.add()` (ID autogenerado) → un reintento de Twilio crea 2 docs en la cola; el gasto NO se duplica (idempotencia por `messageSid` en `finalizeAndRegisterExpense`). Fuente cruzada: `gastos-backend/WHATSAPP_FLOW.md`.
+
 - Runtime: **Node 20**, **Firebase Functions v2** (`onDocumentCreated`/`onRequest`), **TypeScript 5.3** (strict).
 - NLU: **Anthropic Claude `claude-sonnet-4-20250514`** (texto + Vision).
 - Audio: **OpenAI Whisper (`whisper-1`)**, idioma `es`.
