@@ -300,24 +300,28 @@ Emojis intencionales en logs (📨 📷 🤖 ✅ ❌). Útiles para grep visual.
 
 ## Roadmap
 
-### Pre-mejoras (corto plazo)
-1. Migrar a Functions v2 + `defineSecret`.
-2. Fix `getExpenseSummary` por mes.
-3. Cache por invocación de categorías / payment methods.
-4. Tests con `firebase-functions-test`.
-5. Centralizar validación de tipos de media.
+Fuente única: [`ROADMAP.md`](ROADMAP.md). Resumen de los bloques actuales:
 
-### Mejoras (medio plazo)
-6. Absorber webhook de Twilio (`twilioWebhook` HTTPS function).
-7. Validación de firma Twilio.
-8. Separar funciones por canal.
-9. Dashboard web.
+### Fase actual — Validaciones + clasificación inteligente
+- Wallet con saldo sincronizado: `users/{uid}/accounts` + ledger `users/{uid}/movements`.
+- Cambio de cuenta por comando WhatsApp + configuración del usuario.
+- Validación dura de monto, método de pago y fecha (regex + LLM fallback).
+- Nuevo flujo de clasificación con consulta a historial de aprendizaje del usuario.
+- IA en decisiones importantes + log append-only por usuario (`learning_log`).
+- Comandos nuevos: `saldo`, `ingreso`, `transferir`, `usar cuenta`, `pendientes`, `mi historial`.
 
-### Features (largo plazo)
-10. Presupuestos y alertas.
-11. Export CSV/Excel.
-12. ML para predicción de gastos.
-13. Multi-usuario / familia.
+### Infraestructura (paralelo o post-fase)
+- Migración a Functions v2 + `defineSecret`.
+- Absorber webhook de Twilio (`twilioWebhook` HTTPS) con validación de firma `X-Twilio-Signature`.
+- Tests con `firebase-functions-test`.
+- Fix `getExpenseSummary` por mes (`Timestamp.fromDate`).
+- Centralizar `isValidAudioType` y limpiar `voucherType` ignorado.
+
+### Producto (largo plazo)
+- Dashboard web con saldo y movimientos.
+- Export CSV/Excel (gastos + movements + learning_log).
+- Alertas de saldo bajo y presupuestos.
+- Multi-usuario / familia y ML para clasificación están **fuera de la fase actual**.
 
 ---
 

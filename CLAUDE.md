@@ -86,13 +86,22 @@ Resolución en cada service: `functions.config().<scope>?.<key>` ◯ `process.en
 
 ## 9. Roadmap próximo (contexto para "pre mejoras")
 
-Ver sección final del `README.md`. Items prioritarios:
+Fuente única: [`docs/ROADMAP.md`](docs/ROADMAP.md). Contiene la fase de "validaciones + clasificación inteligente" con decisiones cerradas al 2026-05-14.
 
-1. Migración a Functions v2 + `defineSecret`.
-2. Fix de `getExpenseSummary` por mes.
-3. Cache por-invocación de categorías y métodos de pago del usuario.
-4. Tests con `firebase-functions-test`.
-5. Webhook directo de Twilio (saltar la fase de queue para latencia).
+**Piso de la fase (orden de implementación):**
+1. Schemas `users/{uid}/accounts`, `users/{uid}/movements` (ledger), `users/{uid}/learning_log`.
+2. Backfill al deploy: `accountId` en expenses históricos (ledger arranca limpio).
+3. Cuenta activa + moneda heredada + cambio de cuenta por comando WhatsApp.
+4. `saveExpense` dentro de `db.runTransaction()` — expense + movement + `accounts.saldo` atómicos.
+5. Centralizar normalización de matching y refactorizar `InferenceService` con el flujo nuevo (`suggestions_ideas → subcategoría → categoría → historial`).
+
+**Reglas críticas para quien implemente:**
+- `accounts.saldo` es **caché denormalizado**. La fuente de verdad es `users/{uid}/movements` (append-only).
+- Toda escritura que mueva saldo va dentro de transacción Firestore. Romper la atomicidad es bug crítico.
+- Cada decisión importante (clasificación, fecha relativa, monto atípico, método ambiguo) usa IA cuando aplica y escribe en `learning_log` para personalizar al usuario en futuras decisiones.
+- Match por palabra completa sobre texto normalizado; nunca `includes` substring (genera falsos positivos como "ropa" matcheando "europa").
+
+**Cleanup que no bloquea la fase:** fix `getExpenseSummary` por mes, migración a Functions v2 + `defineSecret`, centralizar `isValidAudioType`, limpiar el `voucherType` ignorado de Anthropic, tests con `firebase-functions-test`.
 
 ## 10. Comandos útiles
 

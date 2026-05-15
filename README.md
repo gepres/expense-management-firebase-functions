@@ -269,16 +269,19 @@ Ejemplos detallados de I/O en [`docs/EXAMPLES.md`](docs/EXAMPLES.md).
 
 ## Próximas Mejoras
 
-Roadmap candidato para la siguiente iteración (ver detalles en `docs/ARCHITECTURE.md`):
+Roadmap completo y fuente única: [`docs/ROADMAP.md`](docs/ROADMAP.md). Todas las decisiones de alcance cerradas al 2026-05-14.
 
-- [ ] Migrar `firebase-functions/v1` → `v2` (mejor cold start y manejo de secrets).
-- [ ] Reemplazar `functions.config()` (deprecado) por `defineSecret` / variables de entorno v2.
-- [ ] Filtro de fecha en `getExpenseSummary` (hoy ignora `month` por usar comparación de string sobre Timestamp).
-- [ ] Cache de categorías / payment methods por usuario (evitar lecturas repetidas por mensaje).
-- [ ] Tests con `firebase-functions-test` (ya instalado, sin uso).
-- [ ] Webhook directo de Twilio en lugar de pipeline Phase 1 → queue.
-- [ ] Dashboard web para visualizar gastos.
-- [ ] Export Excel/CSV y alertas de presupuesto.
+**Fase actual — Validaciones + clasificación inteligente:**
+- Concepto de `accounts` con **saldo sincronizado** (wallet + ledger en `movements`, transacciones Firestore atómicas).
+- Cambio de cuenta por comando WhatsApp o desde configuración del usuario.
+- Moneda heredada de la cuenta; validación dura de monto, método de pago y fecha (regex + LLM).
+- Nuevo flujo de clasificación: `suggestions_ideas` → subcategoría → categoría → historial → `sin_clasificar`.
+- **Historial de aprendizaje** por usuario (`learning_log`) que retroalimenta futuras decisiones.
+- Comandos nuevos: `saldo`, `ingreso`, `transferir`, `usar cuenta <nombre>`, `pendientes`, `mi historial`.
+
+**Mantenimiento e infraestructura:** Migración a Functions v2 + `defineSecret`, fix `getExpenseSummary` por mes, cache por invocación de categorías/payment methods, tests con `firebase-functions-test`, absorber webhook de Twilio + validación de firma.
+
+**Producto (largo plazo):** Dashboard web con saldo y movimientos, export CSV/Excel, alertas de saldo bajo y presupuestos.
 
 ---
 
