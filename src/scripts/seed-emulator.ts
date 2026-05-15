@@ -73,6 +73,25 @@ async function main(): Promise<void> {
     ],
   });
 
+  // "taxi" NO está en nombres/suggestions a propósito: así los pasos
+  // 1–3 (match exacto) fallan y "30 taxi" solo resuelve vía el paso 5
+  // (LLM acotado), que es lo que se quiere validar.
+  await userRef.collection("categories").doc("transporte").set({
+    nombre: "Transporte",
+    subcategorias: [
+      {
+        id: "combustible",
+        nombre: "Combustible",
+        suggestions_ideas: ["gasolina", "grifo", "petroleo"],
+      },
+      {
+        id: "publico",
+        nombre: "Transporte público",
+        suggestions_ideas: ["pasaje", "metropolitano", "combi"],
+      },
+    ],
+  });
+
   await userRef.collection("payment_methods").doc("yape").set({
     nombre: "Yape",
   });
