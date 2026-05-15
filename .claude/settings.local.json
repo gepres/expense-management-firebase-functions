@@ -14,7 +14,15 @@
       "Bash(node -e 'const fs=require\\('\\\\''fs'\\\\''\\);let s=fs.readFileSync\\('\\\\''__TRACKED_VAR__'\\\\'','\\\\''utf8'\\\\''\\);s=s.replace\\('\\\\''import * as functions from \"firebase-functions/v1\";'\\\\'','\\\\''import * as logger from \"firebase-functions/logger\";'\\\\''\\);fs.writeFileSync\\('\\\\''__TRACKED_VAR__'\\\\'',s\\);')",
       "Bash(java -version)",
       "Bash(firebase --version)",
-      "PowerShell(Get-NetTCPConnection *)"
+      "PowerShell(Get-NetTCPConnection *)",
+      "PowerShell(npm run *)",
+      "PowerShell(try { \\(Invoke-WebRequest -UseBasicParsing -Headers @{'ngrok-skip-browser-warning'='1'} \"https://unnecessitating-phytocidal-kermit.ngrok-free.dev/expense-app-gepres/us-central1/healthCheck\"\\).Content } catch { \"ERROR: \" + $_.Exception.Message })",
+      "Bash(git check-ignore *)",
+      "Bash(echo \"LINT_EXIT=$?\")",
+      "Bash(echo \"TEST_EXIT=$?\")",
+      "Bash(git add *)",
+      "Bash(git commit -m 'feat:  webhook Twilio en local: bypass de firma en emulador + seed --phone + docs' -m '- validateTwilioRequest omite la firma cuando FUNCTIONS_EMULATOR=true: el *)",
+      "Bash(git commit -m 'fix:  parseBotCommand conserva mayúsculas del ID en clasificar' -m 'Los IDs de documento de Firestore son case-sensitive, pero parseBotCommand *)"
     ]
   }
 }
