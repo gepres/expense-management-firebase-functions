@@ -58,6 +58,19 @@ export class MessageParser {
     return { isCommand: false };
   }
 
+  // Comandos de cuenta (ROADMAP § B.1): "usar cuenta <nombre>",
+  // "cuenta actual", "cuenta principal" (con o sin prefijo "/").
+  static parseAccountCommand(
+    message: string
+  ): { kind: "use" | "current" | "primary"; nombre?: string } | null {
+    const m = message.toLowerCase().trim().replace(/^\//, "");
+    if (m === "cuenta actual") return { kind: "current" };
+    if (m === "cuenta principal") return { kind: "primary" };
+    const useMatch = m.match(/^usar cuenta\s+(.+)$/);
+    if (useMatch) return { kind: "use", nombre: useMatch[1].trim() };
+    return null;
+  }
+
   static parseExpenseFromText(text: string): {
     amount: number;
     description: string;

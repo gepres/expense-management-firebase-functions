@@ -231,6 +231,31 @@ export class InferenceService {
     }
   }
 
+  // Moneda heredada de la cuenta activa salvo override explícito en el
+  // texto del usuario (ROADMAP § B.2).
+  resolveCurrency(
+    description: string,
+    accountMoneda: string
+  ): { moneda: string; source: "text" | "account" } {
+    const desc = description.toLowerCase();
+    if (
+      desc.includes("dólar") ||
+      desc.includes("dolar") ||
+      desc.includes("usd") ||
+      desc.includes("$")
+    ) {
+      return { moneda: "USD", source: "text" };
+    }
+    if (
+      desc.includes("soles") ||
+      desc.includes("sol") ||
+      desc.includes("pen")
+    ) {
+      return { moneda: "PEN", source: "text" };
+    }
+    return { moneda: accountMoneda, source: "account" };
+  }
+
   inferVoucherType(description: string): string {
     try {
       const desc = description.toLowerCase();

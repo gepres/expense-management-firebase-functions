@@ -1,66 +1,116 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import * as functions from "firebase-functions/v1";
 import { ExpenseData } from "../types";
+import { MovementService } from "./movement.service";
 
 export class ExpenseService {
   private db: FirebaseFirestore.Firestore;
+  private movementService: MovementService;
 
   constructor() {
     this.db = getFirestore();
+    this.movementService = new MovementService();
   }
 
+  private parseFecha(fecha: string): Date {
+    if (fecha.length === 10) {
+      const today = new Date();
+      const p = fecha.split("-");
+      return new Date(
+        parseInt(p[0]),
+        parseInt(p[1]) - 1,
+        parseInt(p[2]),
+        today.getHours(),
+        today.getMinutes(),
+        today.getSeconds()
+      );
+    }
+    return new Date(fecha);
+  }
+
+  // Escribe el expense, su movement de gasto y actualiza accounts.saldo en
+  // una sola transacción Firestore. Requiere accountId (ROADMAP § F.1).
   async saveExpense(
     expenseData: ExpenseData
-  ): Promise<{ success: boolean; expenseId?: string; error?: string }> {
-    try {
-      // Parse fecha - if it's just a date (YYYY-MM-DD), use current time
-      let fechaDate: Date;
-      if (expenseData.fecha.length === 10) {
-        // Format: YYYY-MM-DD, add current time
-        const today = new Date();
-        const dateParts = expenseData.fecha.split("-");
-        fechaDate = new Date(
-          parseInt(dateParts[0]),
-          parseInt(dateParts[1]) - 1,
-          parseInt(dateParts[2]),
-          today.getHours(),
-          today.getMinutes(),
-          today.getSeconds()
-        );
-      } else {
-        // It's a full date-time string
-        fechaDate = new Date(expenseData.fecha);
-      }
+  ): Promise<{
+    success: boolean;
+    expenseId?: string;
+    saldoNuevo?: number;
+    error?: string;
+  }> {
+    if (!expenseData.accountId) {
+      const msg = "saveExpense: falta accountId (cuenta activa no resuelta)";
+      functions.logger.error(msg);
+      return { success: false, error: msg };
+    }
 
-      const expenseDoc = {
+    try {
+      const fechaTs = Timestamp.fromDate(this.parseFecha(expenseData.fecha));
+      const now = Timestamp.now();
+      const expenseRef = this.db.collection("expenses").doc();
+
+      const expenseDoc: Record<string, unknown> = {
         userId: expenseData.userId,
+        accountId: expenseData.accountId,
         monto: expenseData.monto,
         categoria: expenseData.categoria,
         descripcion: expenseData.descripcion,
-        fecha: Timestamp.fromDate(fechaDate),
+        fecha: fechaTs,
         metodoPago: expenseData.metodoPago,
         moneda: expenseData.moneda,
         subcategoria: expenseData.subcategoria,
         recurrente: expenseData.recurrente,
         reimbursementStatus: expenseData.reimbursementStatus,
         voucherType: expenseData.voucherType,
-        createdAt: Timestamp.now(),
-        updatedAt: Timestamp.now(),
+        createdAt: now,
+        updatedAt: now,
       };
 
-      const docRef = await this.db.collection("expenses").add(expenseDoc);
+      const optional: Array<[string, unknown]> = [
+        ["matchedTerm", expenseData.matchedTerm],
+        ["matchedLevel", expenseData.matchedLevel],
+        ["currencySource", expenseData.currencySource],
+        ["dateSource", expenseData.dateSource],
+        ["paymentMethodSource", expenseData.paymentMethodSource],
+        ["needsClassification", expenseData.needsClassification],
+        ["needsReview", expenseData.needsReview],
+        ["messageSid", expenseData.messageSid],
+      ];
+      for (const [key, value] of optional) {
+        if (value !== undefined) expenseDoc[key] = value;
+      }
 
-      functions.logger.info(`Expense saved successfully. ID: ${docRef.id}`, expenseDoc);
+      const saldoNuevo = await this.db.runTransaction(async (tx) => {
+        const movResult = await this.movementService.writeMovement(
+          expenseData.userId,
+          {
+            accountId: expenseData.accountId as string,
+            tipo: "gasto",
+            monto: expenseData.monto,
+            expenseId: expenseRef.id,
+            descripcion: expenseData.descripcion,
+            fecha: fechaTs,
+          },
+          { tx }
+        );
+        tx.set(expenseRef, expenseDoc);
+        return movResult.saldoNuevo;
+      });
 
-      return {
-        success: true,
-        expenseId: docRef.id,
-      };
+      functions.logger.info(
+        `✅ Expense saved ${expenseRef.id} (saldo → ${saldoNuevo})`,
+        expenseDoc
+      );
+
+      return { success: true, expenseId: expenseRef.id, saldoNuevo };
     } catch (error) {
       functions.logger.error("Error saving expense to Firestore:", error);
       return {
         success: false,
-        error: error instanceof Error ? error.message : "Error desconocido al guardar el gasto",
+        error:
+          error instanceof Error ?
+            error.message :
+            "Error desconocido al guardar el gasto",
       };
     }
   }
@@ -82,6 +132,7 @@ export class ExpenseService {
         return {
           id: doc.id,
           userId: data.userId,
+          accountId: data.accountId,
           monto: data.monto,
           categoria: data.categoria,
           descripcion: data.descripcion,
@@ -112,9 +163,12 @@ export class ExpenseService {
         .where("userId", "==", userId);
 
       if (month) {
-        const startDate = `${month}-01`;
-        const endDate = `${month}-31`;
-        query = query.where("fecha", ">=", startDate).where("fecha", "<=", endDate);
+        const [y, m] = month.split("-").map((n) => parseInt(n, 10));
+        const start = Timestamp.fromDate(new Date(y, m - 1, 1));
+        const end = Timestamp.fromDate(new Date(y, m, 1));
+        query = query
+          .where("fecha", ">=", start)
+          .where("fecha", "<", end);
       }
 
       const snapshot = await query.get();
@@ -125,7 +179,8 @@ export class ExpenseService {
       snapshot.forEach((doc) => {
         const data = doc.data();
         total += data.monto;
-        byCategory[data.categoria] = (byCategory[data.categoria] || 0) + data.monto;
+        byCategory[data.categoria] =
+          (byCategory[data.categoria] || 0) + data.monto;
       });
 
       return {

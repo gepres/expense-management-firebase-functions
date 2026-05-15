@@ -29,7 +29,26 @@ export interface TwilioWebhookBody {
   AccountSid?: string;
 }
 
-export interface ExpenseData {
+export type MatchedLevel =
+  | "suggestion"
+  | "subcategory"
+  | "category"
+  | "history"
+  | "default";
+
+export type CurrencySource = "text" | "account" | "default";
+export type DateSource = "regex" | "llm" | "message" | "default";
+export type PaymentMethodSource = "text" | "inferred" | "fallback";
+
+export interface ExpenseAuditFields {
+  matchedTerm?: string | null;
+  matchedLevel?: MatchedLevel;
+  currencySource?: CurrencySource;
+  dateSource?: DateSource;
+  paymentMethodSource?: PaymentMethodSource;
+}
+
+export interface ExpenseData extends ExpenseAuditFields {
   monto: number;
   categoria: string;
   descripcion: string;
@@ -41,6 +60,11 @@ export interface ExpenseData {
   reimbursementStatus: "pending" | "approved" | "rejected";
   userId: string;
   voucherType: string;
+  // Fase "validaciones + clasificación inteligente":
+  accountId?: string;
+  needsClassification?: boolean;
+  needsReview?: boolean;
+  messageSid?: string;
 }
 
 export interface AnthropicResponse {
@@ -86,4 +110,141 @@ export interface Subcategory {
 export interface PaymentMethod {
   id: string;
   nombre: string;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Wallet: accounts + movements (ledger)
+// Decisiones cerradas 2026-05-14 — ver docs/ROADMAP.md § F.
+// `accounts.saldo` es caché denormalizado; fuente de verdad: movements.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type AccountTipo = "personal" | "negocio" | "compartida";
+
+export interface Account {
+  id: string;
+  nombre: string;
+  isPrimary: boolean;
+  moneda: string;
+  tipo?: AccountTipo;
+  saldo: number;
+  saldoInicial: number;
+  saldoMinimoAlerta?: number;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface CreateAccountInput {
+  nombre: string;
+  moneda: string;
+  isPrimary?: boolean;
+  tipo?: AccountTipo;
+  saldoInicial?: number;
+  saldoMinimoAlerta?: number;
+}
+
+export type MovementType =
+  | "gasto"
+  | "ingreso"
+  | "transferencia_in"
+  | "transferencia_out"
+  | "ajuste"
+  | "reversion";
+
+export interface MovementMetadata {
+  aperturaInicial?: boolean;
+  ajusteManual?: boolean;
+}
+
+export interface Movement {
+  id: string;
+  accountId: string;
+  tipo: MovementType;
+  monto: number;
+  signoEfectivo: -1 | 1;
+  expenseId?: string;
+  transferPairId?: string;
+  descripcion: string;
+  fecha: Timestamp;
+  saldoAnterior: number;
+  saldoNuevo: number;
+  metadata?: MovementMetadata;
+  createdAt: Timestamp;
+}
+
+export interface MovementInput {
+  accountId: string;
+  tipo: MovementType;
+  monto: number;
+  expenseId?: string;
+  transferPairId?: string;
+  descripcion: string;
+  fecha: Timestamp;
+  metadata?: MovementMetadata;
+}
+
+export interface WhatsAppSession {
+  activeAccountId: string;
+  setAt: Timestamp;
+  expiresAt: Timestamp;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// Learning log: bitácora append-only de decisiones por usuario.
+// ROADMAP § G.2.
+// ─────────────────────────────────────────────────────────────────────────
+
+export type LearningLogType =
+  | "classification"
+  | "currency"
+  | "date"
+  | "payment"
+  | "amount"
+  | "user_correction";
+
+export type LearningSource =
+  | "regex"
+  | "llm"
+  | "history"
+  | "user_correction"
+  | "default";
+
+export type InputChannel = "text" | "image" | "audio";
+
+export interface LearningLogInput {
+  raw: string;
+  normalized: string;
+  channel: InputChannel;
+}
+
+export interface LearningLogDecision {
+  field: string;
+  value: string | number;
+  source: LearningSource;
+  matchedTerm?: string;
+  confidence?: number;
+}
+
+export interface LearningLogFeedback {
+  correctedValue: string | number;
+  at: Timestamp;
+  via: "wsp_command" | "app_ui";
+}
+
+export interface LearningLogEntry {
+  id?: string;
+  expenseId?: string;
+  type: LearningLogType;
+  input: LearningLogInput;
+  decision: LearningLogDecision;
+  userFeedback?: LearningLogFeedback;
+  tokens?: string[];
+  createdAt: Timestamp;
+  deletedAt?: Timestamp;
+}
+
+export interface LearningLogEntryInput {
+  expenseId?: string;
+  type: LearningLogType;
+  input: LearningLogInput;
+  decision: LearningLogDecision;
 }

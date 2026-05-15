@@ -1,11 +1,12 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { Timestamp } from "firebase-admin/firestore";
-import { WhatsAppQueueDocument, UserData, TwilioWebhookBody } from "./types";
+import { WhatsAppQueueDocument, UserData, TwilioWebhookBody, Account } from "./types";
 import { AnthropicService } from "./services/anthropic.service";
 import { TwilioService } from "./services/twilio.service";
 import { ExpenseService } from "./services/expense.service";
 import { UserService } from "./services/user.service";
+import { AccountService } from "./services/account.service";
 import { InferenceService } from "./services/inference.service";
 import { TranscriptionService } from "./services/transcription.service";
 import { MessageParser } from "./utils/message-parser";
@@ -55,6 +56,13 @@ export const processWhatsAppQueue = functions.firestore
 
       functions.logger.info(`✅ User found: ${user.id}`);
 
+      // Resolve active account (session override → primary → first → lazy create)
+      const accountService = new AccountService();
+      const account = await accountService.resolveActiveAccount(user.id);
+      functions.logger.info(
+        `💳 Active account: ${account.id} (${account.nombre}, ${account.moneda})`
+      );
+
       // Check if message has media
       const hasMedia = MessageParser.hasMedia(data.webhookBody);
 
@@ -63,13 +71,13 @@ export const processWhatsAppQueue = functions.firestore
 
         // Check if it's an audio file
         if (MediaDownloader.isValidAudioType(mediaContentType)) {
-          await processAudioMessage(user, phoneNumber, data.webhookBody, snap);
+          await processAudioMessage(user, account, phoneNumber, data.webhookBody, snap);
         } else {
           // Process as image
-          await processImageMessage(user, phoneNumber, data.webhookBody, snap);
+          await processImageMessage(user, account, phoneNumber, data.webhookBody, snap);
         }
       } else if (message) {
-        await processTextMessage(user, phoneNumber, message, snap);
+        await processTextMessage(user, account, phoneNumber, message, snap);
       } else {
         functions.logger.warn("Message with no text and no media");
         await snap.ref.update({
@@ -111,12 +119,14 @@ export const processWhatsAppQueue = functions.firestore
 /**
  * Process image messages (receipts, Yape/Plin screenshots)
  * @param {UserData} user - User data
+ * @param {Account} account - Active account
  * @param {string} phoneNumber - User's phone number
  * @param {TwilioWebhookBody} webhookBody - Twilio webhook body
  * @param {FirebaseFirestore.DocumentSnapshot} snap - Firestore document snapshot
  */
 async function processImageMessage(
   user: UserData,
+  account: Account,
   phoneNumber: string,
   webhookBody: TwilioWebhookBody,
   snap: FirebaseFirestore.DocumentSnapshot
@@ -195,16 +205,22 @@ async function processImageMessage(
     else if (detectedMethod.includes("tarjeta")) paymentMethodId = "tarjeta";
 
 
+    // Receipt currency is explicit document data; fall back to account
+    const moneda = extractionResult.moneda || account.moneda;
+    const currencySource = extractionResult.moneda ? "text" : "account";
+
     // Save expense
     const expenseService = new ExpenseService();
     const saveResult = await expenseService.saveExpense({
       userId: user.id,
+      accountId: account.id,
       monto: extractionResult.monto,
       categoria: categoryId,
       descripcion: extractionResult.descripcion,
       fecha: extractionResult.fecha,
       metodoPago: paymentMethodId,
-      moneda: extractionResult.moneda,
+      moneda: moneda,
+      currencySource: currencySource,
       subcategoria: subcategoryId,
       recurrente: false,
       reimbursementStatus: "pending",
@@ -223,7 +239,7 @@ async function processImageMessage(
 
     // Send confirmation
     let confirmationMessage = "✅ *Gasto registrado por imagen!*\n\n" +
-      `💰 Monto: ${extractionResult.moneda} ${extractionResult.monto.toFixed(2)}\n` +
+      `💰 Monto: ${moneda} ${extractionResult.monto.toFixed(2)}\n` +
       `📝 Descripción: ${extractionResult.descripcion}\n` +
       `🏷️ Categoría: ${categoryId}\n` +
       `💳 Método: ${paymentMethodId}`;
@@ -256,12 +272,14 @@ async function processImageMessage(
 /**
  * Process audio messages (voice notes with expense information)
  * @param {UserData} user - User data
+ * @param {Account} account - Active account
  * @param {string} phoneNumber - User's phone number
  * @param {TwilioWebhookBody} webhookBody - Twilio webhook body
  * @param {FirebaseFirestore.DocumentSnapshot} snap - Firestore document snapshot
  */
 async function processAudioMessage(
   user: UserData,
+  account: Account,
   phoneNumber: string,
   webhookBody: TwilioWebhookBody,
   snap: FirebaseFirestore.DocumentSnapshot
@@ -356,19 +374,22 @@ async function processAudioMessage(
       transcription
     );
 
-    const currency = inferenceService.inferCurrency(transcription);
+    const { moneda: currency, source: currencySource } =
+      inferenceService.resolveCurrency(transcription, account.moneda);
     const voucherType = inferenceService.inferVoucherType(transcription);
 
     // Save expense
     const expenseService = new ExpenseService();
     const saveResult = await expenseService.saveExpense({
       userId: user.id,
+      accountId: account.id,
       monto: parseResult.expenseData.monto,
       categoria: categoryId,
       descripcion: parseResult.expenseData.descripcion,
       fecha: parseResult.expenseData.fecha,
       metodoPago: paymentMethodId,
       moneda: currency,
+      currencySource: currencySource,
       subcategoria: subcategoryId,
       recurrente: false,
       reimbursementStatus: "pending",
@@ -415,12 +436,14 @@ async function processAudioMessage(
 /**
  * Process text messages (commands or expense descriptions)
  * @param {UserData} user - User data
+ * @param {Account} account - Active account
  * @param {string} phoneNumber - User's phone number
  * @param {string} message - Text message content
  * @param {FirebaseFirestore.DocumentSnapshot} snap - Firestore document snapshot
  */
 async function processTextMessage(
   user: UserData,
+  account: Account,
   phoneNumber: string,
   message: string,
   snap: FirebaseFirestore.DocumentSnapshot
@@ -428,6 +451,14 @@ async function processTextMessage(
   const twilioService = new TwilioService();
 
   try {
+    // Account commands (usar cuenta / cuenta actual / cuenta principal)
+    const accountCommand = MessageParser.parseAccountCommand(message);
+    if (accountCommand) {
+      await handleAccountCommand(user, account, phoneNumber, accountCommand);
+      await snap.ref.update({ status: "completed" });
+      return;
+    }
+
     // Check if it's a command
     const commandCheck = MessageParser.isCommandMessage(message);
 
@@ -444,6 +475,7 @@ async function processTextMessage(
       // Successfully parsed with regex
       await registerExpenseFromParsed(
         user,
+        account,
         phoneNumber,
         parsedExpense.amount,
         parsedExpense.description,
@@ -478,6 +510,7 @@ async function processTextMessage(
     // Save expense parsed by Anthropic
     await registerExpenseFromParsed(
       user,
+      account,
       phoneNumber,
       parseResult.expenseData.monto,
       parseResult.expenseData.descripcion,
@@ -499,6 +532,7 @@ async function processTextMessage(
 /**
  * Register expense from parsed data
  * @param {UserData} user - User data
+ * @param {Account} account - Active account
  * @param {string} phoneNumber - User's phone number
  * @param {number} amount - Expense amount
  * @param {string} description - Expense description
@@ -506,6 +540,7 @@ async function processTextMessage(
  */
 async function registerExpenseFromParsed(
   user: UserData,
+  account: Account,
   phoneNumber: string,
   amount: number,
   description: string,
@@ -520,18 +555,21 @@ async function registerExpenseFromParsed(
     const categoryId = await inferenceService.inferCategory(user.id, description);
     const subcategoryId = await inferenceService.inferSubCategory(user.id, categoryId, description);
     const paymentMethodId = await inferenceService.inferPaymentMethod(user.id, description);
-    const currency = inferenceService.inferCurrency(description);
+    const { moneda: currency, source: currencySource } =
+      inferenceService.resolveCurrency(description, account.moneda);
     const voucherType = inferenceService.inferVoucherType(description);
 
     // Save expense
     const saveResult = await expenseService.saveExpense({
       userId: user.id,
+      accountId: account.id,
       monto: amount,
       categoria: categoryId,
       descripcion: description,
       fecha: new Date().toISOString(),
       metodoPago: paymentMethodId,
       moneda: currency,
+      currencySource: currencySource,
       subcategoria: subcategoryId,
       recurrente: false,
       reimbursementStatus: "pending",
@@ -576,6 +614,68 @@ async function registerExpenseFromParsed(
       error: error instanceof Error ? error.message : "Unknown error",
     });
   }
+}
+
+/**
+ * Handle account commands (usar cuenta / cuenta actual / cuenta principal)
+ * @param {UserData} user - User data
+ * @param {Account} account - Currently active account
+ * @param {string} phoneNumber - User's phone number
+ * @param {object} cmd - Parsed account command
+ */
+async function handleAccountCommand(
+  user: UserData,
+  account: Account,
+  phoneNumber: string,
+  cmd: { kind: "use" | "current" | "primary"; nombre?: string }
+): Promise<void> {
+  const twilioService = new TwilioService();
+  const accountService = new AccountService();
+
+  if (cmd.kind === "current") {
+    await twilioService.sendMessage(
+      phoneNumber,
+      `💳 *Cuenta activa:* ${account.nombre}\n` +
+        `💱 Moneda: ${account.moneda}\n` +
+        `💰 Saldo: ${account.moneda} ${account.saldo.toFixed(2)}`
+    );
+    return;
+  }
+
+  if (cmd.kind === "primary") {
+    await accountService.clearSessionAccount(user.id);
+    const primary = await accountService.getPrimary(user.id);
+    await twilioService.sendMessage(
+      phoneNumber,
+      primary ?
+        `✅ Volviste a tu cuenta principal: *${primary.nombre}*` :
+        "✅ Sesión de cuenta restablecida a la principal."
+    );
+    return;
+  }
+
+  const target = cmd.nombre ?
+    await accountService.findByNombre(user.id, cmd.nombre) :
+    null;
+
+  if (!target) {
+    const all = await accountService.listByUser(user.id);
+    const names = all.map((a) => `• ${a.nombre}`).join("\n");
+    await twilioService.sendMessage(
+      phoneNumber,
+      `❌ No encontré la cuenta "${cmd.nombre}".\n\n` +
+        `Tus cuentas:\n${names}`
+    );
+    return;
+  }
+
+  await accountService.setSessionAccount(user.id, target.id);
+  await twilioService.sendMessage(
+    phoneNumber,
+    `✅ Cuenta activa: *${target.nombre}* (${target.moneda}).\n` +
+      "Se mantendrá durante esta conversación. " +
+      "Escribe \"cuenta principal\" para volver."
+  );
 }
 
 /**

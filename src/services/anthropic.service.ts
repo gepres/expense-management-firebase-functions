@@ -26,7 +26,8 @@ export class AnthropicService {
         "  \"monto\": número (solo el valor numérico, sin símbolos de moneda ni comas),\n" +
         "  \"comercio\": \"nombre del comercio o destinatario del pago\",\n" +
         "  \"descripcion\": \"descripción breve del producto/servicio o concepto del pago\",\n" +
-        "  \"fecha\": \"fecha y hora en formato YYYY-MM-DD HH:MM:SS (usa la fecha y hora de hoy si no se menciona)\",\n" +
+        "  \"fecha\": \"fecha y hora en formato YYYY-MM-DD HH:MM:SS " +
+        "(usa la fecha y hora de hoy si no se menciona)\",\n" +
         "  \"metodoPago\": \"método de pago detectado " +
         "(yape, plin, tarjeta, transferencia, efectivo)\",\n" +
         "  \"moneda\": \"moneda (PEN, USD, EUR, etc.)\",\n" +
@@ -151,7 +152,7 @@ Si el mensaje NO contiene información de un gasto, responde con:
 }
 
 Ejemplos:
-- "Gasté 25 soles en almuerzo pague con yape" → {"monto": 25, "categoria": "comida", "descripcion": "almuerzo", "fecha": "2025-11-25"}
+- "Gasté 25 soles en almuerzo" → {"monto": 25, "categoria": "comida", "descripcion": "almuerzo", "fecha": "2025-11-25"}
 - "50 en taxi en efectivo" → {"monto": 50, "categoria": "transporte", "descripcion": "taxi", "fecha": "2025-11-25"}
 - "Compré medicina por 80" → {"monto": 80, "categoria": "salud", "descripcion": "medicina", "fecha": "2025-11-25"}
 
