@@ -2,7 +2,9 @@
 
 Asistente de gastos por WhatsApp construido sobre **Firebase Functions + Firestore**. Recibe mensajes de texto, imágenes (comprobantes, Yape, Plin) y notas de voz, los interpreta con **Anthropic Claude** (texto + Vision) y **OpenAI Whisper** (audio), y registra los gastos en Firestore.
 
-> Versión: 2.1.0 · Node 20 · TypeScript 5.3 · Firebase Functions v1
+Cada gasto se vincula a una **cuenta** (wallet con saldo sincronizado vía ledger de movimientos) y cada decisión de clasificación se registra en un **historial de aprendizaje** por usuario que personaliza futuras inferencias.
+
+> Versión: 2.2.0 · Node 20 · TypeScript 5.3 · Firebase Functions v1
 
 ---
 
@@ -177,6 +179,57 @@ gastos-firebase-functions/
 { nombre: string }
 ```
 
+### `users/{userId}/accounts/{accountId}`
+```ts
+{
+  nombre: string;
+  isPrimary: boolean;          // exactamente una true por usuario
+  moneda: string;              // PEN | USD | ...
+  tipo?: "personal" | "negocio" | "compartida";
+  saldo: number;               // caché; fuente de verdad: movements
+  saldoInicial: number;
+  saldoMinimoAlerta?: number;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+```
+
+### `users/{userId}/movements/{movementId}` (ledger append-only)
+```ts
+{
+  accountId: string;
+  tipo: "gasto" | "ingreso" | "transferencia_in" | "transferencia_out" | "ajuste" | "reversion";
+  monto: number;               // siempre positivo
+  signoEfectivo: -1 | 1;
+  expenseId?: string;
+  transferPairId?: string;
+  descripcion: string;
+  fecha: Timestamp;
+  saldoAnterior: number;
+  saldoNuevo: number;
+  createdAt: Timestamp;
+}
+```
+
+### `users/{userId}/learning_log/{entryId}` (append-only)
+```ts
+{
+  expenseId?: string;
+  type: "classification" | "user_correction" | ...;
+  input: { raw: string; normalized: string; channel: "text"|"image"|"audio" };
+  decision: { field: string; value: string|number; source: string; matchedTerm?: string };
+  userFeedback?: { correctedValue: string|number; at: Timestamp; via: string };
+  tokens?: string[];           // para queryRelevant (array-contains-any)
+  createdAt: Timestamp;
+  deletedAt?: Timestamp;       // soft delete
+}
+```
+
+### `users/{userId}/sessions/whatsapp`
+```ts
+{ activeAccountId: string; setAt: Timestamp; expiresAt: Timestamp }
+```
+
 ### `whatsapp_queue/{queueId}`
 ```ts
 {
@@ -195,16 +248,26 @@ gastos-firebase-functions/
 ```ts
 {
   userId: string;
+  accountId: string;                 // cuenta a la que pertenece el gasto
   monto: number;
-  categoria: string;                 // id de Category
+  categoria: string;                 // id de Category | "sin_clasificar"
   subcategoria: string | null;       // id de Subcategory
   descripcion: string;
   fecha: Timestamp;
-  metodoPago: string;                // yape | plin | efectivo | tarjeta | transferencia | id custom
+  metodoPago: string;                // yape | plin | efectivo | tarjeta | transferencia | otro | id custom
   moneda: string;                    // PEN | USD | EUR | ...
   recurrente: boolean;
   reimbursementStatus: "pending" | "approved" | "rejected";
   voucherType: string;               // boleta | factura | recibo | nota_venta
+  // Auditoría de inferencia (best-effort)
+  matchedTerm?: string | null;
+  matchedLevel?: "suggestion"|"subcategory"|"category"|"history"|"user_correction"|"default";
+  currencySource?: "text"|"account"|"default";
+  dateSource?: "regex"|"llm"|"message"|"default";
+  paymentMethodSource?: "text"|"inferred"|"fallback";
+  needsClassification?: boolean;     // true si quedó "sin_clasificar"
+  needsReview?: boolean;             // true si el método de pago no se reconoció
+  messageSid?: string;               // idempotencia anti-duplicado
   createdAt: Timestamp;
   updatedAt: Timestamp;
 }
@@ -230,11 +293,20 @@ Gasté 100 en supermercado
 - Nota de voz en español: *"Gasté veinticinco soles en almuerzo"*
 
 ### Comandos
-| Comando | Alias                                       | Acción                         |
+| Comando | Alias / forma                               | Acción                         |
 |---------|---------------------------------------------|--------------------------------|
 | `inicio`| `hola`, `hi`, `start`                       | Mensaje de bienvenida          |
 | `resumen`| `summary`, `total`, `ver gastos`           | Total + breakdown por categoría|
 | `ayuda` | `help`, `comandos`, `commands`              | Lista de comandos              |
+| `saldo` | `mi saldo`                                  | Saldo de la cuenta activa      |
+| `saldos`| `saldo de cuentas`                          | Saldo de todas las cuentas     |
+| `movimientos` | —                                     | Últimos movimientos            |
+| `ingreso <monto> <desc>` | —                          | Registra un ingreso            |
+| `transferir <monto> a <cuenta>` | —                   | Transferencia entre cuentas    |
+| `usar cuenta <nombre>` | `cuenta actual`, `cuenta principal` | Cambia/consulta la cuenta activa |
+| `pendientes` | `clasificar`                          | Gastos sin clasificar / a revisar |
+| `clasificar <id> <cat> [subcat]` | —                  | Reclasifica un gasto (alimenta el aprendizaje) |
+| `mi historial` | `aprendizajes`, `olvidar historial` | Historial de aprendizaje       |
 
 Ejemplos detallados de I/O en [`docs/EXAMPLES.md`](docs/EXAMPLES.md).
 
@@ -250,6 +322,7 @@ Ejemplos detallados de I/O en [`docs/EXAMPLES.md`](docs/EXAMPLES.md).
 | `npm run serve`     | Build + emuladores Firebase (solo functions)         |
 | `npm run shell`     | Functions shell interactivo                          |
 | `npm run deploy`    | `firebase deploy --only functions`                   |
+| `npm run backfill:accounts` | Migración idempotente de `accountId` (requiere ADC) |
 | `npm run logs`      | Tail de logs de Cloud Functions                      |
 
 ---

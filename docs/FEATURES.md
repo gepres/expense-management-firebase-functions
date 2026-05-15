@@ -2,7 +2,7 @@
 
 Catálogo de capacidades del sistema, agrupadas por canal de entrada y por capa.
 
-> Versión: 2.1.0 · Modelo NLU: `claude-sonnet-4-20250514` · Transcripción: `whisper-1`
+> Versión: 2.2.0 · Modelo NLU: `claude-sonnet-4-20250514` · Transcripción: `whisper-1`
 
 ---
 
@@ -105,37 +105,49 @@ Mensaje intermedio al usuario:
 
 ---
 
-## Inferencia (capa común a todos los canales)
+## Cuentas y Wallet
 
-`InferenceService` resuelve cinco campos antes de guardar. Lee siempre desde subcolecciones del usuario.
+Cada gasto pertenece a una **cuenta** (`users/{uid}/accounts`). La cuenta define la **moneda** por defecto y mantiene un **saldo** sincronizado.
 
-### Categoría (`inferCategory`)
-1. Match por **nombre** de categoría.
-2. Match por **nombre** de subcategoría.
-3. Match por **keywords** (`suggestions_ideas`) de cada subcategoría.
-4. Default: primera categoría del usuario, o literal `"otros"` si no hay categorías.
+- **Cuenta activa:** `AccountService.resolveActiveAccount` → sesión WhatsApp (override temporal) → `isPrimary` → primera cuenta → crea `Principal` PEN lazy.
+- **Saldo como ledger:** la fuente de verdad es `users/{uid}/movements` (append-only). `accounts.saldo` es caché. Cada gasto/ingreso/transferencia se escribe en una **transacción Firestore** que actualiza saldo + movement + (para gasto) el expense, todo atómico.
+- **Cambio de cuenta:** `usar cuenta <nombre>` (override de sesión con TTL), `cuenta actual`, `cuenta principal`.
 
-### Subcategoría (`inferSubCategory`)
-Solo dentro de la categoría ya inferida:
-1. Match por nombre.
-2. Match por `suggestions_ideas`.
-3. Default: primera subcategoría, o `null`.
+## Clasificación (`InferenceService.classify`)
 
-### Método de pago (`inferPaymentMethod`)
-1. Palabras clave en la descripción: `yape`, `plin`, `efectivo`, `transferencia`, `tarjeta`.
-2. Match contra `users/{uid}/payment_methods`.
-3. Default: primer método del usuario, o literal `"efectivo"`.
+Orden estricto, match por **palabra/frase completa** sobre texto normalizado (sin diacríticos, minúsculas) — no `includes` substring:
 
-### Moneda (`inferCurrency`)
-- `USD` si el texto contiene `dólar`, `dolar`, `usd` o `$`.
-- `PEN` si contiene `soles`, `sol` o `pen`.
-- Default: `PEN`.
+1. `suggestions_ideas` de subcategorías → adopta subcategoría dueña + su categoría.
+2. Nombre de subcategoría → su categoría.
+3. Nombre de categoría → categoría, subcategoría `null`.
+4. **Historial del usuario** (`learning_log`): si una decisión previa similar existe (prioriza correcciones del usuario), se adopta.
+5. Sin match → `categoria: "sin_clasificar"`, `needsClassification: true`.
+
+Cada decisión persiste `matchedTerm` + `matchedLevel` en el expense y se registra en `learning_log`.
+
+### Método de pago (`resolvePaymentMethod`)
+1. Token explícito en texto (`yape/plin/efectivo/transferencia/tarjeta` o método del usuario).
+2. `explicitHint` (de imagen/Anthropic) que no mapea → `metodoPago: "otro"`, `needsReview: true`.
+3. Sin señal → `efectivo` (fallback, sin review).
+
+### Moneda (`resolveCurrency`)
+- Override explícito en texto (`dólar/usd/$` → USD; `soles/sol/pen` → PEN).
+- Si no, **heredada de la cuenta activa**. Se persiste `currencySource`.
+
+### Fecha (`parseDateFromText`)
+- Regex: `hoy`, `ayer`, `anteayer`, `YYYY-MM-DD`, `DD-MM-YYYY`, `el N de <mes>`.
+- Prioridad: fecha en texto → fecha del mensaje → (sin default de processing). Se persiste `dateSource`.
 
 ### Voucher (`inferVoucherType`)
-- `factura` | `recibo` | `nota_venta` si la descripción menciona la palabra.
-- Default: `boleta`.
+- `factura` | `recibo` | `nota_venta` si la descripción lo menciona; default `boleta`.
 
-> El `voucherType` que devuelve Anthropic en `parseExpenseMessage` es ignorado en `index.ts`; siempre se reinfiere localmente. Decisión consciente para mantener la fuente de verdad en `InferenceService`.
+## Historial de aprendizaje (`learning_log`)
+
+Append-only por usuario. Cada decisión de clasificación se registra; el comando `clasificar` añade una corrección (`user_correction`) que **retroalimenta** futuras clasificaciones (paso 4 de `classify`). Soft delete con `olvidar historial`.
+
+## Idempotencia
+
+`finalize` consulta `expenses` por `messageSid` antes de guardar. Si Twilio reintenta el webhook, el gasto no se duplica.
 
 ---
 
@@ -183,6 +195,25 @@ Por categoría:
 
 ### `ayuda`
 Lista compacta de formatos y comandos.
+
+### Cuentas y wallet
+| Comando | Acción |
+|---------|--------|
+| `saldo` / `mi saldo` | Saldo de la cuenta activa |
+| `saldos` / `saldo de cuentas` | Saldo de todas las cuentas |
+| `movimientos` | Últimos movimientos del ledger |
+| `ingreso <monto> <desc>` | Registra un ingreso (sube el saldo) |
+| `transferir <monto> a <cuenta>` | Transferencia entre cuentas (misma moneda) |
+| `usar cuenta <nombre>` | Cambia la cuenta activa de la sesión |
+| `cuenta actual` / `cuenta principal` | Consulta / vuelve a la principal |
+
+### Clasificación y aprendizaje
+| Comando | Acción |
+|---------|--------|
+| `pendientes` | Lista gastos `sin_clasificar` o por revisar |
+| `clasificar <id> <cat> [subcat]` | Reclasifica un gasto y lo aprende |
+| `mi historial` / `aprendizajes` | Decisiones recientes |
+| `olvidar historial` | Soft delete del historial de aprendizaje |
 
 ---
 

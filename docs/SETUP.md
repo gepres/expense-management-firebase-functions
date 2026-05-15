@@ -141,15 +141,36 @@ Function URL (healthCheck): https://us-central1-<proyecto>.cloudfunctions.net/he
 
 ## Paso 10 — Índices de Firestore
 
-Índices recomendados para queries de `expenses`:
+Los índices compuestos están declarados en `firestore.indexes.json` y enlazados desde `firebase.json`. Publicarlos:
 
-| Colección | Campos                                |
-|-----------|---------------------------------------|
-| `expenses`| `userId` ASC, `createdAt` DESC        |
-| `expenses`| `userId` ASC, `fecha` ASC             |
-| `users`   | `whatsappPhone` ASC                   |
+```bash
+firebase deploy --only firestore:indexes
+firebase deploy --only firestore:rules
+```
 
-Cuando una query falla por falta de índice, Firebase te entrega un enlace directo para crearlo.
+Índices incluidos:
+
+| Colección       | Campos                                      | Usado por                  |
+|-----------------|---------------------------------------------|----------------------------|
+| `movements`     | `accountId` ASC, `fecha` DESC               | `getMovementsByAccount`    |
+| `movements`     | `accountId` ASC, `fecha` ASC                | `getSaldoAtDate`           |
+| `learning_log`  | `type` ASC, `tokens` ARRAY                  | `queryRelevant`            |
+| `expenses`      | `userId` ASC, `createdAt` DESC              | `getExpensesByUserId`      |
+| `expenses`      | `userId` ASC, `fecha` ASC                   | `getExpenseSummary` (mes)  |
+| `expenses`      | `userId` ASC, `needsClassification` ASC     | `getPending`               |
+| `expenses`      | `userId` ASC, `needsReview` ASC             | `getPending`               |
+
+Sin estos índices, `pendientes`/`movimientos`/resumen por mes fallan en runtime. Si aparece un error de índice, Firebase entrega un enlace directo para crearlo.
+
+## Paso 10.1 — Migración de cuentas (una vez)
+
+Antes del primer uso productivo, correr el backfill idempotente:
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=/ruta/serviceAccount.json npm run backfill:accounts
+```
+
+Crea la cuenta `Principal` (PEN, saldo 0) para cada usuario y asigna `accountId` a los `expenses` históricos. **No** reproduce movimientos: el ledger arranca en cero; el usuario fija su saldo real con `ingreso`/`ajustar`. Correrlo dos veces es seguro.
 
 ---
 

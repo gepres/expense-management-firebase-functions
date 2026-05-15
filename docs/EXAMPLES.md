@@ -54,6 +54,23 @@ Cuando el regex no acierta, el mensaje pasa a `AnthropicService.parseExpenseMess
 
 Prefijos `/comando` también funcionan: `/resumen`, `/ayuda`.
 
+### Cuentas, wallet y clasificación
+
+```
+saldo                          → saldo de la cuenta activa
+saldos                         → saldo de todas las cuentas
+movimientos                    → últimos movimientos
+ingreso 1500 sueldo            → +1500 en la cuenta activa
+transferir 200 a negocio       → transferencia entre cuentas (misma moneda)
+usar cuenta negocio            → activa "negocio" durante la conversación
+cuenta actual                  → muestra la cuenta activa
+cuenta principal               → vuelve a la principal
+pendientes                     → lista gastos sin_clasificar / a revisar
+clasificar abc123 comida cena  → reclasifica el gasto abc123 y lo aprende
+mi historial                   → decisiones recientes
+olvidar historial              → borra el historial de aprendizaje
+```
+
 ### Respuesta a `resumen`
 
 ```
@@ -208,6 +225,7 @@ Por favor vincula tu número de WhatsApp desde tu perfil en la aplicación.
 ```json
 {
   "userId": "abc123",
+  "accountId": "acc_principal",
   "monto": 50,
   "categoria": "comida",
   "subcategoria": "restaurantes",
@@ -218,8 +236,61 @@ Por favor vincula tu número de WhatsApp desde tu perfil en la aplicación.
   "recurrente": false,
   "reimbursementStatus": "pending",
   "voucherType": "boleta",
+  "matchedTerm": "almuerzo",
+  "matchedLevel": "suggestion",
+  "currencySource": "account",
+  "dateSource": "message",
+  "paymentMethodSource": "fallback",
+  "needsClassification": false,
+  "needsReview": false,
+  "messageSid": "SM123456789",
   "createdAt": "<Timestamp>",
   "updatedAt": "<Timestamp>"
+}
+```
+
+### `users/{uid}/accounts/{accountId}`
+
+```json
+{
+  "nombre": "Principal",
+  "isPrimary": true,
+  "moneda": "PEN",
+  "tipo": "personal",
+  "saldo": 1250.50,
+  "saldoInicial": 0,
+  "createdAt": "<Timestamp>",
+  "updatedAt": "<Timestamp>"
+}
+```
+
+### `users/{uid}/movements/{movementId}` (ledger)
+
+```json
+{
+  "accountId": "acc_principal",
+  "tipo": "gasto",
+  "monto": 50,
+  "signoEfectivo": -1,
+  "expenseId": "exp_789",
+  "descripcion": "almuerzo",
+  "fecha": "<Timestamp>",
+  "saldoAnterior": 1300.50,
+  "saldoNuevo": 1250.50,
+  "createdAt": "<Timestamp>"
+}
+```
+
+### `users/{uid}/learning_log/{entryId}`
+
+```json
+{
+  "expenseId": "exp_789",
+  "type": "classification",
+  "input": { "raw": "50 almuerzo", "normalized": "50 almuerzo", "channel": "text" },
+  "decision": { "field": "categoria", "value": "comida", "source": "regex", "matchedTerm": "almuerzo" },
+  "tokens": ["almuerzo"],
+  "createdAt": "<Timestamp>"
 }
 ```
 
