@@ -2,7 +2,6 @@ import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
 import { Account, CreateAccountInput, WhatsAppSession } from "../types";
 
-const DEFAULT_PRIMARY_NAME = "Principal";
 const DEFAULT_MONEDA = "PEN";
 const SESSION_TTL_MINUTES_DEFAULT = 30;
 const SESSION_DOC_ID = "whatsapp";
@@ -134,36 +133,41 @@ export class AccountService {
     }
   }
 
-  // Resolución de cuenta activa para una invocación del bot. Orden
-  // (ROADMAP § B.1): sesión WhatsApp no expirada → isPrimary → primera
-  // cuenta (se marca primary lazy) → crear "Principal" PEN saldo=0.
+  // Resolución de cuenta activa: usa la colección CANÓNICA top-level
+  // `accounts` (dueña: backend/web app), NO el modelo paralelo del bot
+  // (`users/{uid}/accounts`). Así `expense.accountId` referencia la
+  // cuenta que el web app sí resuelve. Orden: default (isDefault) →
+  // primera cuenta del usuario. Mapea name→nombre, currency→moneda,
+  // isDefault→isPrimary. El bot ya NO crea cuentas ni mantiene saldo.
   async resolveActiveAccount(userId: string): Promise<Account> {
-    const session = await this.getSessionAccount(userId);
-    if (session) return session;
-
-    const primary = await this.getPrimary(userId);
-    if (primary) return primary;
-
-    const all = await this.listByUser(userId);
-    if (all.length > 0) {
-      const first = all[0];
-      await this.setPrimary(userId, first.id);
-      return { ...first, isPrimary: true };
+    const col = this.db.collection("accounts");
+    let snap = await col
+      .where("userId", "==", userId)
+      .where("isDefault", "==", true)
+      .limit(1)
+      .get();
+    if (snap.empty) {
+      snap = await col.where("userId", "==", userId).limit(1).get();
     }
-
-    const created = await this.createAccount(userId, {
-      nombre: DEFAULT_PRIMARY_NAME,
-      moneda: DEFAULT_MONEDA,
-      isPrimary: true,
-      tipo: "personal",
-    });
-    if (!created) {
-      throw new Error(`Could not initialize primary account for user ${userId}`);
+    if (snap.empty) {
+      throw new Error(
+        `Usuario ${userId} sin cuentas en la coleccion canonica ` +
+          "accounts. Crea una cuenta predeterminada en el web app."
+      );
     }
-    logger.info(
-      `Lazy-created primary account for user ${userId}: ${created.id}`
-    );
-    return created;
+    const doc = snap.docs[0];
+    const d = doc.data() as Record<string, unknown>;
+    return {
+      id: doc.id,
+      nombre: (d.name as string) ?? "Cuenta",
+      isPrimary: (d.isDefault as boolean) ?? false,
+      moneda: (d.currency as string) ?? DEFAULT_MONEDA,
+      saldo:
+        ((d.bankBalance as number) ?? 0) + ((d.cashBalance as number) ?? 0),
+      saldoInicial: 0,
+      createdAt: (d.createdAt as Account["createdAt"]) ?? Timestamp.now(),
+      updatedAt: (d.updatedAt as Account["updatedAt"]) ?? Timestamp.now(),
+    };
   }
 
   async getSessionAccount(userId: string): Promise<Account | null> {

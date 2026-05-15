@@ -1,15 +1,12 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
 import { ExpenseData } from "../types";
-import { MovementService } from "./movement.service";
 
 export class ExpenseService {
   private db: FirebaseFirestore.Firestore;
-  private movementService: MovementService;
 
   constructor() {
     this.db = getFirestore();
-    this.movementService = new MovementService();
   }
 
   private parseFecha(fecha: string): Date {
@@ -80,29 +77,14 @@ export class ExpenseService {
         if (value !== undefined) expenseDoc[key] = value;
       }
 
-      const saldoNuevo = await this.db.runTransaction(async (tx) => {
-        const movResult = await this.movementService.writeMovement(
-          expenseData.userId,
-          {
-            accountId: expenseData.accountId as string,
-            tipo: "gasto",
-            monto: expenseData.monto,
-            expenseId: expenseRef.id,
-            descripcion: expenseData.descripcion,
-            fecha: fechaTs,
-          },
-          { tx }
-        );
-        tx.set(expenseRef, expenseDoc);
-        return movResult.saldoNuevo;
-      });
+      // Saldo/ledger desacoplados: el bot ya NO mantiene saldo ni
+      // `movements` (los maneja el web app/backend con su propio modelo).
+      // Solo persiste el gasto contra la cuenta canónica.
+      await expenseRef.set(expenseDoc);
 
-      logger.info(
-        `✅ Expense saved ${expenseRef.id} (saldo → ${saldoNuevo})`,
-        expenseDoc
-      );
+      logger.info(`✅ Expense saved ${expenseRef.id}`, expenseDoc);
 
-      return { success: true, expenseId: expenseRef.id, saldoNuevo };
+      return { success: true, expenseId: expenseRef.id };
     } catch (error) {
       logger.error("Error saving expense to Firestore:", error);
       return {
