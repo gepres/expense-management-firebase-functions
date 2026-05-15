@@ -1,12 +1,20 @@
 import * as functions from "firebase-functions/v1";
 import * as admin from "firebase-admin";
 import { Timestamp } from "firebase-admin/firestore";
-import { WhatsAppQueueDocument, UserData, TwilioWebhookBody, Account, LearningSource } from "./types";
+import {
+  WhatsAppQueueDocument,
+  UserData,
+  TwilioWebhookBody,
+  Account,
+  LearningSource,
+  BotCommand,
+} from "./types";
 import { AnthropicService } from "./services/anthropic.service";
 import { TwilioService } from "./services/twilio.service";
 import { ExpenseService } from "./services/expense.service";
 import { UserService } from "./services/user.service";
 import { AccountService } from "./services/account.service";
+import { MovementService } from "./services/movement.service";
 import { InferenceService } from "./services/inference.service";
 import { LearningLogService } from "./services/learning-log.service";
 import { TranscriptionService } from "./services/transcription.service";
@@ -363,6 +371,14 @@ async function processTextMessage(
       return;
     }
 
+    // Bot commands (saldo / ingreso / transferir / pendientes / historial)
+    const botCommand = MessageParser.parseBotCommand(message);
+    if (botCommand) {
+      await handleBotCommand(user, account, phoneNumber, botCommand);
+      await snap.ref.update({ status: "completed" });
+      return;
+    }
+
     // Check if it's a command
     const commandCheck = MessageParser.isCommandMessage(message);
 
@@ -494,6 +510,22 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
   const messageDate = queueDoc?.createdAt ?
     queueDoc.createdAt.toDate() :
     new Date();
+
+  // Idempotencia (§ C.1): Twilio puede reintentar el webhook.
+  if (messageSid) {
+    const dup = await expenseService.findByMessageSid(messageSid);
+    if (dup) {
+      functions.logger.info(
+        `Duplicate messageSid ${messageSid} → expense ${dup.id}, skipping`
+      );
+      await twilioService.sendMessage(
+        phoneNumber,
+        "ℹ️ Este gasto ya estaba registrado. No lo dupliqué."
+      );
+      await snap.ref.update({ status: "completed", error: "duplicate" });
+      return;
+    }
+  }
 
   const classification = await inferenceService.classify(
     user.id,
@@ -650,6 +682,260 @@ async function registerExpenseFromParsed(
       status: "failed",
       error: error instanceof Error ? error.message : "Unknown error",
     });
+  }
+}
+
+/**
+ * Handle bot commands (wallet, pendientes, historial)
+ * @param {UserData} user - User data
+ * @param {Account} account - Active account
+ * @param {string} phoneNumber - User's phone number
+ * @param {BotCommand} cmd - Parsed bot command
+ * @return {Promise<void>} resolves when done
+ */
+async function handleBotCommand(
+  user: UserData,
+  account: Account,
+  phoneNumber: string,
+  cmd: BotCommand
+): Promise<void> {
+  const twilioService = new TwilioService();
+  const accountService = new AccountService();
+  const movementService = new MovementService();
+  const expenseService = new ExpenseService();
+  const learningLog = new LearningLogService();
+
+  try {
+    switch (cmd.kind) {
+    case "saldo": {
+      await twilioService.sendMessage(
+        phoneNumber,
+        `🧮 *${account.nombre}*\n💱 ${account.moneda}\n` +
+          `💰 Saldo: ${account.moneda} ${account.saldo.toFixed(2)}`
+      );
+      break;
+    }
+    case "saldos": {
+      const all = await accountService.listByUser(user.id);
+      if (all.length === 0) {
+        await twilioService.sendMessage(phoneNumber, "No tienes cuentas.");
+        break;
+      }
+      const lines = all
+        .map(
+          (a) =>
+            `• ${a.nombre}${a.isPrimary ? " (principal)" : ""}: ` +
+            `${a.moneda} ${a.saldo.toFixed(2)}`
+        )
+        .join("\n");
+      await twilioService.sendMessage(
+        phoneNumber,
+        `🧮 *Saldos por cuenta*\n\n${lines}`
+      );
+      break;
+    }
+    case "movimientos": {
+      const movs = await movementService.getMovementsByAccount(
+        user.id,
+        account.id,
+        10
+      );
+      if (movs.length === 0) {
+        await twilioService.sendMessage(
+          phoneNumber,
+          `Sin movimientos en ${account.nombre}.`
+        );
+        break;
+      }
+      const lines = movs
+        .map((mv) => {
+          const signo = mv.signoEfectivo < 0 ? "-" : "+";
+          return (
+            `${signo}${account.moneda} ${mv.monto.toFixed(2)} ` +
+            `· ${mv.tipo} · ${mv.descripcion}`
+          );
+        })
+        .join("\n");
+      await twilioService.sendMessage(
+        phoneNumber,
+        `📜 *Movimientos — ${account.nombre}*\n\n${lines}`
+      );
+      break;
+    }
+    case "ingreso": {
+      const check = MessageParser.validateAmount(cmd.monto);
+      if (!check.ok || check.value === undefined) {
+        await twilioService.sendMessage(phoneNumber, `❌ ${check.error}`);
+        break;
+      }
+      const res = await movementService.writeMovement(user.id, {
+        accountId: account.id,
+        tipo: "ingreso",
+        monto: check.value,
+        descripcion: cmd.descripcion,
+        fecha: Timestamp.now(),
+      });
+      await twilioService.sendMessage(
+        phoneNumber,
+        `✅ Ingreso: ${account.moneda} ${check.value.toFixed(2)}\n` +
+          `🧮 Saldo ${account.nombre}: ` +
+          `${account.moneda} ${res.saldoNuevo.toFixed(2)}`
+      );
+      break;
+    }
+    case "transferir": {
+      const check = MessageParser.validateAmount(cmd.monto);
+      if (!check.ok || check.value === undefined) {
+        await twilioService.sendMessage(phoneNumber, `❌ ${check.error}`);
+        break;
+      }
+      const target = await accountService.findByNombre(user.id, cmd.cuenta);
+      if (!target) {
+        const all = await accountService.listByUser(user.id);
+        const names = all.map((a) => `• ${a.nombre}`).join("\n");
+        await twilioService.sendMessage(
+          phoneNumber,
+          `❌ No encontré la cuenta "${cmd.cuenta}".\n\n` +
+            `Tus cuentas:\n${names}`
+        );
+        break;
+      }
+      try {
+        const r = await movementService.transfer(user.id, {
+          fromAccountId: account.id,
+          toAccountId: target.id,
+          monto: check.value,
+          descripcion: `Transferencia a ${target.nombre}`,
+        });
+        await twilioService.sendMessage(
+          phoneNumber,
+          `✅ ${account.moneda} ${check.value.toFixed(2)} → ` +
+            `${target.nombre}\n` +
+            `🧮 ${account.nombre}: ${account.moneda} ` +
+            `${r.fromSaldoNuevo.toFixed(2)}\n` +
+            `🧮 ${target.nombre}: ${target.moneda} ` +
+            `${r.toSaldoNuevo.toFixed(2)}`
+        );
+      } catch (err) {
+        await twilioService.sendMessage(
+          phoneNumber,
+          "❌ No pude transferir: " +
+            `${err instanceof Error ? err.message : "error"}`
+        );
+      }
+      break;
+    }
+    case "pendientes": {
+      const pend = await expenseService.getPending(user.id, 15);
+      if (pend.length === 0) {
+        await twilioService.sendMessage(
+          phoneNumber,
+          "✅ No tienes gastos pendientes."
+        );
+        break;
+      }
+      const lines = pend
+        .map((p) => {
+          const flags = [
+            p.needsClassification ? "sin clasificar" : null,
+            p.needsReview ? "revisar método" : null,
+          ]
+            .filter(Boolean)
+            .join(", ");
+          return (
+            `• ${p.id}\n  ${p.moneda} ${p.monto.toFixed(2)} — ` +
+            `${p.descripcion} (${flags})`
+          );
+        })
+        .join("\n");
+      await twilioService.sendMessage(
+        phoneNumber,
+        `🗂️ *Pendientes*\n\n${lines}\n\n` +
+          "Clasificar: clasificar <id> <categoria> [subcategoria]"
+      );
+      break;
+    }
+    case "clasificar": {
+      const exp = await expenseService.getById(cmd.expenseId);
+      if (!exp || exp.userId !== user.id) {
+        await twilioService.sendMessage(
+          phoneNumber,
+          `❌ No encontré el gasto ${cmd.expenseId}.`
+        );
+        break;
+      }
+      const ok = await expenseService.updateClassification(
+        cmd.expenseId,
+        cmd.categoria,
+        cmd.subcategoria ?? null
+      );
+      if (!ok) {
+        await twilioService.sendMessage(
+          phoneNumber,
+          "❌ No pude actualizar la clasificación."
+        );
+        break;
+      }
+      await learningLog.append(user.id, {
+        expenseId: cmd.expenseId,
+        type: "user_correction",
+        input: {
+          raw: exp.descripcion,
+          normalized: MessageParser.normalizeForMatching(exp.descripcion),
+          channel: "text",
+        },
+        decision: {
+          field: "categoria",
+          value: cmd.categoria,
+          source: "user_correction",
+        },
+      });
+      await twilioService.sendMessage(
+        phoneNumber,
+        `✅ Reclasificado a *${cmd.categoria}*` +
+          `${cmd.subcategoria ? ` / ${cmd.subcategoria}` : ""}. ` +
+          "Lo recordaré."
+      );
+      break;
+    }
+    case "historial": {
+      const recent = await learningLog.getRecent(user.id, 10);
+      if (recent.length === 0) {
+        await twilioService.sendMessage(
+          phoneNumber,
+          "Aún no tengo historial de aprendizaje tuyo."
+        );
+        break;
+      }
+      const lines = recent
+        .map(
+          (e) =>
+            `• "${e.input.raw}" → ${e.decision.field}=` +
+            `${e.decision.value} (${e.decision.source})`
+        )
+        .join("\n");
+      await twilioService.sendMessage(
+        phoneNumber,
+        `🧠 *Tu historial reciente*\n\n${lines}\n\n` +
+          "Escribe \"olvidar historial\" para borrarlo."
+      );
+      break;
+    }
+    case "olvidar_historial": {
+      await learningLog.softDeleteAll(user.id);
+      await twilioService.sendMessage(
+        phoneNumber,
+        "🗑️ Tu historial de aprendizaje fue borrado."
+      );
+      break;
+    }
+    }
+  } catch (error) {
+    functions.logger.error("Error handling bot command:", error);
+    await twilioService.sendMessage(
+      phoneNumber,
+      "❌ Error al procesar el comando. Intenta de nuevo."
+    );
   }
 }
 

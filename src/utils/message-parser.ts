@@ -1,4 +1,4 @@
-import { TwilioWebhookBody } from "../types";
+import { TwilioWebhookBody, BotCommand } from "../types";
 
 export class MessageParser {
   static normalizePhoneNumber(phone: string): string {
@@ -149,6 +149,61 @@ export class MessageParser {
         d.setFullYear(now.getFullYear() - 1);
       }
       return isNaN(d.getTime()) ? null : atMessageTime(d);
+    }
+
+    return null;
+  }
+
+  // Comandos de bot con argumentos (ROADMAP § F.5 + § C.6 + § G.5).
+  static parseBotCommand(message: string): BotCommand | null {
+    const m = message.toLowerCase().trim().replace(/^\//, "");
+
+    if (m === "saldos" || m === "saldo de cuentas") return { kind: "saldos" };
+    if (m === "saldo" || m === "mi saldo") return { kind: "saldo" };
+    if (m === "movimientos" || m === "mis movimientos") {
+      return { kind: "movimientos" };
+    }
+    if (m === "olvidar historial") return { kind: "olvidar_historial" };
+    if (m === "historial" || m === "mi historial" || m === "aprendizajes") {
+      return { kind: "historial" };
+    }
+
+    const ingreso = m.match(
+      /^ingreso\s+(\d+(?:[.,]\d{1,2})?)\s+(.+)$/
+    );
+    if (ingreso) {
+      return {
+        kind: "ingreso",
+        monto: parseFloat(ingreso[1].replace(",", ".")),
+        descripcion: ingreso[2].trim(),
+      };
+    }
+
+    const transferir = m.match(
+      /^transferir\s+(\d+(?:[.,]\d{1,2})?)\s+a\s+(.+)$/
+    );
+    if (transferir) {
+      return {
+        kind: "transferir",
+        monto: parseFloat(transferir[1].replace(",", ".")),
+        cuenta: transferir[2].trim(),
+      };
+    }
+
+    const clasificar = m.match(
+      /^clasificar\s+(\S+)\s+(\S+)(?:\s+(\S+))?$/
+    );
+    if (clasificar) {
+      return {
+        kind: "clasificar",
+        expenseId: clasificar[1],
+        categoria: clasificar[2],
+        subcategoria: clasificar[3],
+      };
+    }
+
+    if (m === "pendientes" || m === "clasificar") {
+      return { kind: "pendientes" };
     }
 
     return null;

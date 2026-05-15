@@ -34,6 +34,7 @@ export type MatchedLevel =
   | "subcategory"
   | "category"
   | "history"
+  | "user_correction"
   | "default";
 
 export type CurrencySource = "text" | "account" | "default";
@@ -111,6 +112,22 @@ export interface PaymentMethod {
   id: string;
   nombre: string;
 }
+
+export type BotCommand =
+  | { kind: "saldo" }
+  | { kind: "saldos" }
+  | { kind: "movimientos" }
+  | { kind: "historial" }
+  | { kind: "olvidar_historial" }
+  | { kind: "pendientes" }
+  | { kind: "ingreso"; monto: number; descripcion: string }
+  | { kind: "transferir"; monto: number; cuenta: string }
+  | {
+      kind: "clasificar";
+      expenseId: string;
+      categoria: string;
+      subcategoria?: string;
+    };
 
 // ─────────────────────────────────────────────────────────────────────────
 // Wallet: accounts + movements (ledger)

@@ -152,6 +152,100 @@ export class ExpenseService {
     }
   }
 
+  // Idempotencia (§ C.1): ¿ya existe un expense para este MessageSid?
+  async findByMessageSid(
+    messageSid: string
+  ): Promise<{ id: string } | null> {
+    try {
+      const snap = await this.db
+        .collection("expenses")
+        .where("messageSid", "==", messageSid)
+        .limit(1)
+        .get();
+      if (snap.empty) return null;
+      return { id: snap.docs[0].id };
+    } catch (error) {
+      functions.logger.error("Error checking messageSid idempotency:", error);
+      return null;
+    }
+  }
+
+  // Gastos que requieren atención del usuario (§ C.6).
+  async getPending(
+    userId: string,
+    limit: number = 20
+  ): Promise<
+    Array<{
+      id: string;
+      descripcion: string;
+      monto: number;
+      moneda: string;
+      categoria: string;
+      needsClassification?: boolean;
+      needsReview?: boolean;
+    }>
+  > {
+    try {
+      const base = this.db.collection("expenses").where("userId", "==", userId);
+      const [clsSnap, revSnap] = await Promise.all([
+        base.where("needsClassification", "==", true).limit(limit).get(),
+        base.where("needsReview", "==", true).limit(limit).get(),
+      ]);
+      const byId = new Map<string, FirebaseFirestore.DocumentData>();
+      [...clsSnap.docs, ...revSnap.docs].forEach((d) => {
+        if (!byId.has(d.id)) byId.set(d.id, { id: d.id, ...d.data() });
+      });
+      return Array.from(byId.values())
+        .slice(0, limit)
+        .map((d) => ({
+          id: d.id,
+          descripcion: d.descripcion,
+          monto: d.monto,
+          moneda: d.moneda,
+          categoria: d.categoria,
+          needsClassification: d.needsClassification,
+          needsReview: d.needsReview,
+        }));
+    } catch (error) {
+      functions.logger.error("Error fetching pending expenses:", error);
+      return [];
+    }
+  }
+
+  async getById(
+    expenseId: string
+  ): Promise<{ id: string; userId: string; descripcion: string } | null> {
+    try {
+      const doc = await this.db.collection("expenses").doc(expenseId).get();
+      if (!doc.exists) return null;
+      const d = doc.data() as FirebaseFirestore.DocumentData;
+      return { id: doc.id, userId: d.userId, descripcion: d.descripcion };
+    } catch (error) {
+      functions.logger.error("Error fetching expense by id:", error);
+      return null;
+    }
+  }
+
+  async updateClassification(
+    expenseId: string,
+    categoria: string,
+    subcategoria: string | null
+  ): Promise<boolean> {
+    try {
+      await this.db.collection("expenses").doc(expenseId).update({
+        categoria: categoria,
+        subcategoria: subcategoria,
+        needsClassification: false,
+        matchedLevel: "user_correction",
+        updatedAt: Timestamp.now(),
+      });
+      return true;
+    } catch (error) {
+      functions.logger.error("Error updating expense classification:", error);
+      return false;
+    }
+  }
+
   async getExpenseSummary(userId: string, month?: string): Promise<{
     total: number;
     byCategory: Record<string, number>;
