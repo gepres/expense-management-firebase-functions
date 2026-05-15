@@ -1,5 +1,5 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import * as functions from "firebase-functions/v1";
+import * as logger from "firebase-functions/logger";
 import { Account, CreateAccountInput, WhatsAppSession } from "../types";
 
 const DEFAULT_PRIMARY_NAME = "Principal";
@@ -32,7 +32,7 @@ export class AccountService {
       if (!snap.exists) return null;
       return { id: snap.id, ...(snap.data() as Omit<Account, "id">) };
     } catch (error) {
-      functions.logger.error("Error fetching account by id:", error);
+      logger.error("Error fetching account by id:", error);
       return null;
     }
   }
@@ -45,7 +45,7 @@ export class AccountService {
         ...(d.data() as Omit<Account, "id">),
       }));
     } catch (error) {
-      functions.logger.error("Error listing accounts for user:", error);
+      logger.error("Error listing accounts for user:", error);
       return [];
     }
   }
@@ -60,7 +60,7 @@ export class AccountService {
       const doc = snap.docs[0];
       return { id: doc.id, ...(doc.data() as Omit<Account, "id">) };
     } catch (error) {
-      functions.logger.error("Error fetching primary account:", error);
+      logger.error("Error fetching primary account:", error);
       return null;
     }
   }
@@ -71,7 +71,7 @@ export class AccountService {
       const all = await this.listByUser(userId);
       return all.find((a) => a.nombre.trim().toLowerCase() === normalized) ?? null;
     } catch (error) {
-      functions.logger.error("Error finding account by nombre:", error);
+      logger.error("Error finding account by nombre:", error);
       return null;
     }
   }
@@ -101,12 +101,12 @@ export class AccountService {
         updatedAt: now,
       };
       await docRef.set(account);
-      functions.logger.info(
+      logger.info(
         `Account created for user ${userId}: ${docRef.id} (${input.nombre})`
       );
       return { id: docRef.id, ...account };
     } catch (error) {
-      functions.logger.error("Error creating account:", error);
+      logger.error("Error creating account:", error);
       return null;
     }
   }
@@ -126,7 +126,7 @@ export class AccountService {
       });
       return true;
     } catch (error) {
-      functions.logger.error("Error setting primary account:", error);
+      logger.error("Error setting primary account:", error);
       return false;
     }
   }
@@ -157,7 +157,7 @@ export class AccountService {
     if (!created) {
       throw new Error(`Could not initialize primary account for user ${userId}`);
     }
-    functions.logger.info(
+    logger.info(
       `Lazy-created primary account for user ${userId}: ${created.id}`
     );
     return created;
@@ -173,7 +173,7 @@ export class AccountService {
       }
       return this.getById(userId, data.activeAccountId);
     } catch (error) {
-      functions.logger.error("Error reading WhatsApp session:", error);
+      logger.error("Error reading WhatsApp session:", error);
       return null;
     }
   }
@@ -193,7 +193,7 @@ export class AccountService {
       await this.sessionDoc(userId).set(session);
       return true;
     } catch (error) {
-      functions.logger.error("Error setting WhatsApp session:", error);
+      logger.error("Error setting WhatsApp session:", error);
       return false;
     }
   }
@@ -203,7 +203,7 @@ export class AccountService {
       await this.sessionDoc(userId).delete();
       return true;
     } catch (error) {
-      functions.logger.error("Error clearing WhatsApp session:", error);
+      logger.error("Error clearing WhatsApp session:", error);
       return false;
     }
   }

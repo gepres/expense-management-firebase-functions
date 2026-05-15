@@ -32,14 +32,13 @@ cp .env.example .env
 # Editar con tus credenciales reales
 ```
 
-**Opción B — Producción (Firebase config):**
+**Opción B — Producción (Secrets v2):**
 ```bash
-firebase functions:config:set \
-  twilio.account_sid="ACxxxxx" \
-  twilio.auth_token="xxxxx" \
-  twilio.whatsapp_number="whatsapp:+14155238886" \
-  anthropic.api_key="sk-ant-xxxxx" \
-  openai.api_key="sk-xxxxx"
+firebase functions:secrets:set TWILIO_ACCOUNT_SID
+firebase functions:secrets:set TWILIO_AUTH_TOKEN
+firebase functions:secrets:set TWILIO_WHATSAPP_NUMBER
+firebase functions:secrets:set ANTHROPIC_API_KEY
+firebase functions:secrets:set OPENAI_API_KEY
 ```
 
 ### 4. Compilar y desplegar
@@ -117,9 +116,9 @@ firebase functions:config:get
 
 | Error                              | Acción                                                                 |
 |------------------------------------|------------------------------------------------------------------------|
-| `Anthropic API key not configured` | `firebase functions:config:set anthropic.api_key="..." && npm run deploy` |
-| `Twilio credentials not configured`| Idem con `twilio.account_sid` y `twilio.auth_token`                    |
-| `OpenAI API key not configured`    | Idem con `openai.api_key`. Solo bloquea procesamiento de audio.        |
+| `Anthropic API key not configured` | `firebase functions:secrets:set ANTHROPIC_API_KEY && npm run deploy`   |
+| `Twilio credentials not configured`| Idem con `TWILIO_ACCOUNT_SID` y `TWILIO_AUTH_TOKEN`                    |
+| `OpenAI API key not configured`    | Idem con `OPENAI_API_KEY`. Solo bloquea procesamiento de audio.       |
 | Mensaje no procesa                 | Revisar `npm run logs` y status de doc en `whatsapp_queue`             |
 
 ## Siguientes pasos

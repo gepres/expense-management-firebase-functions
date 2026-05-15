@@ -55,6 +55,14 @@
         { "fieldPath": "userId", "order": "ASCENDING" },
         { "fieldPath": "needsReview", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "expenses",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "userId", "order": "ASCENDING" },
+        { "fieldPath": "amountFlagged", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

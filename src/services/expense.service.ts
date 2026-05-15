@@ -1,5 +1,5 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import * as functions from "firebase-functions/v1";
+import * as logger from "firebase-functions/logger";
 import { ExpenseData } from "../types";
 import { MovementService } from "./movement.service";
 
@@ -40,7 +40,7 @@ export class ExpenseService {
   }> {
     if (!expenseData.accountId) {
       const msg = "saveExpense: falta accountId (cuenta activa no resuelta)";
-      functions.logger.error(msg);
+      logger.error(msg);
       return { success: false, error: msg };
     }
 
@@ -97,14 +97,14 @@ export class ExpenseService {
         return movResult.saldoNuevo;
       });
 
-      functions.logger.info(
+      logger.info(
         `✅ Expense saved ${expenseRef.id} (saldo → ${saldoNuevo})`,
         expenseDoc
       );
 
       return { success: true, expenseId: expenseRef.id, saldoNuevo };
     } catch (error) {
-      functions.logger.error("Error saving expense to Firestore:", error);
+      logger.error("Error saving expense to Firestore:", error);
       return {
         success: false,
         error:
@@ -147,7 +147,28 @@ export class ExpenseService {
         };
       });
     } catch (error) {
-      functions.logger.error("Error fetching expenses from Firestore:", error);
+      logger.error("Error fetching expenses from Firestore:", error);
+      return [];
+    }
+  }
+
+  // Montos recientes del usuario para detección de monto atípico (§ G.1).
+  async getRecentAmounts(
+    userId: string,
+    limit: number = 50
+  ): Promise<number[]> {
+    try {
+      const snap = await this.db
+        .collection("expenses")
+        .where("userId", "==", userId)
+        .orderBy("createdAt", "desc")
+        .limit(limit)
+        .get();
+      return snap.docs
+        .map((d) => Number(d.data().monto))
+        .filter((n) => Number.isFinite(n) && n > 0);
+    } catch (error) {
+      logger.error("Error fetching recent amounts:", error);
       return [];
     }
   }
@@ -165,7 +186,7 @@ export class ExpenseService {
       if (snap.empty) return null;
       return { id: snap.docs[0].id };
     } catch (error) {
-      functions.logger.error("Error checking messageSid idempotency:", error);
+      logger.error("Error checking messageSid idempotency:", error);
       return null;
     }
   }
@@ -183,16 +204,18 @@ export class ExpenseService {
       categoria: string;
       needsClassification?: boolean;
       needsReview?: boolean;
+      amountFlagged?: boolean;
     }>
   > {
     try {
       const base = this.db.collection("expenses").where("userId", "==", userId);
-      const [clsSnap, revSnap] = await Promise.all([
+      const [clsSnap, revSnap, amtSnap] = await Promise.all([
         base.where("needsClassification", "==", true).limit(limit).get(),
         base.where("needsReview", "==", true).limit(limit).get(),
+        base.where("amountFlagged", "==", true).limit(limit).get(),
       ]);
       const byId = new Map<string, FirebaseFirestore.DocumentData>();
-      [...clsSnap.docs, ...revSnap.docs].forEach((d) => {
+      [...clsSnap.docs, ...revSnap.docs, ...amtSnap.docs].forEach((d) => {
         if (!byId.has(d.id)) byId.set(d.id, { id: d.id, ...d.data() });
       });
       return Array.from(byId.values())
@@ -205,9 +228,10 @@ export class ExpenseService {
           categoria: d.categoria,
           needsClassification: d.needsClassification,
           needsReview: d.needsReview,
+          amountFlagged: d.amountFlagged,
         }));
     } catch (error) {
-      functions.logger.error("Error fetching pending expenses:", error);
+      logger.error("Error fetching pending expenses:", error);
       return [];
     }
   }
@@ -221,7 +245,7 @@ export class ExpenseService {
       const d = doc.data() as FirebaseFirestore.DocumentData;
       return { id: doc.id, userId: d.userId, descripcion: d.descripcion };
     } catch (error) {
-      functions.logger.error("Error fetching expense by id:", error);
+      logger.error("Error fetching expense by id:", error);
       return null;
     }
   }
@@ -241,7 +265,7 @@ export class ExpenseService {
       });
       return true;
     } catch (error) {
-      functions.logger.error("Error updating expense classification:", error);
+      logger.error("Error updating expense classification:", error);
       return false;
     }
   }
@@ -283,7 +307,7 @@ export class ExpenseService {
         count: snapshot.size,
       };
     } catch (error) {
-      functions.logger.error("Error calculating expense summary:", error);
+      logger.error("Error calculating expense summary:", error);
       return {
         total: 0,
         byCategory: {},

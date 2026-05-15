@@ -1,5 +1,5 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import * as functions from "firebase-functions/v1";
+import * as logger from "firebase-functions/logger";
 import {
   LearningLogEntry,
   LearningLogEntryInput,
@@ -65,7 +65,7 @@ export class LearningLogService {
       await docRef.set(doc);
       return docRef.id;
     } catch (error) {
-      functions.logger.error("Error appending learning_log entry:", error);
+      logger.error("Error appending learning_log entry:", error);
       return null;
     }
   }
@@ -103,7 +103,7 @@ export class LearningLogService {
       });
       return entries;
     } catch (error) {
-      functions.logger.error("Error querying relevant learning entries:", error);
+      logger.error("Error querying relevant learning entries:", error);
       return [];
     }
   }
@@ -122,7 +122,7 @@ export class LearningLogService {
       await this.col(userId).doc(entryId).update({ userFeedback: payload });
       return true;
     } catch (error) {
-      functions.logger.error("Error recording learning feedback:", error);
+      logger.error("Error recording learning feedback:", error);
       return false;
     }
   }
@@ -140,7 +140,7 @@ export class LearningLogService {
         .map((d) => ({ id: d.id, ...(d.data() as Omit<LearningLogEntry, "id">) }))
         .filter((e) => !e.deletedAt);
     } catch (error) {
-      functions.logger.error("Error fetching recent learning entries:", error);
+      logger.error("Error fetching recent learning entries:", error);
       return [];
     }
   }
@@ -156,7 +156,7 @@ export class LearningLogService {
       await batch.commit();
       return true;
     } catch (error) {
-      functions.logger.error("Error soft-deleting learning log:", error);
+      logger.error("Error soft-deleting learning log:", error);
       return false;
     }
   }

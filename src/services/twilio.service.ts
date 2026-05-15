@@ -1,4 +1,4 @@
-import * as functions from "firebase-functions/v1";
+import * as logger from "firebase-functions/logger";
 import twilio from "twilio";
 
 export class TwilioService {
@@ -6,11 +6,10 @@ export class TwilioService {
   private whatsappNumber: string;
 
   constructor() {
-    const accountSid = functions.config().twilio?.account_sid || process.env.TWILIO_ACCOUNT_SID;
-    const authToken = functions.config().twilio?.auth_token || process.env.TWILIO_AUTH_TOKEN;
-    this.whatsappNumber = functions.config().twilio?.whatsapp_number ||
-      process.env.TWILIO_WHATSAPP_NUMBER ||
-      "whatsapp:+14155238886";
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    this.whatsappNumber =
+      process.env.TWILIO_WHATSAPP_NUMBER || "whatsapp:+14155238886";
 
     if (!accountSid || !authToken) {
       throw new Error("Twilio credentials not configured");
@@ -23,7 +22,7 @@ export class TwilioService {
     try {
       const toNumber = to.startsWith("whatsapp:") ? to : `whatsapp:${to}`;
 
-      functions.logger.info(`Sending WhatsApp message to ${toNumber}`);
+      logger.info(`Sending WhatsApp message to ${toNumber}`);
 
       const result = await this.client.messages.create({
         body: message,
@@ -31,10 +30,10 @@ export class TwilioService {
         to: toNumber,
       });
 
-      functions.logger.info(`Message sent successfully. SID: ${result.sid}`);
+      logger.info(`Message sent successfully. SID: ${result.sid}`);
       return true;
     } catch (error) {
-      functions.logger.error("Error sending WhatsApp message:", error);
+      logger.error("Error sending WhatsApp message:", error);
       return false;
     }
   }

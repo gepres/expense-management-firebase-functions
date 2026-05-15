@@ -1,5 +1,5 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
-import * as functions from "firebase-functions/v1";
+import * as logger from "firebase-functions/logger";
 import { Account, Movement, MovementInput, MovementType } from "../types";
 
 export interface WriteMovementResult {
@@ -227,7 +227,7 @@ export class MovementService {
         ...(d.data() as Omit<Movement, "id">),
       }));
     } catch (error) {
-      functions.logger.error("Error fetching movements:", error);
+      logger.error("Error fetching movements:", error);
       return [];
     }
   }
@@ -251,7 +251,7 @@ export class MovementService {
       });
       return saldo;
     } catch (error) {
-      functions.logger.error("Error computing saldo at date:", error);
+      logger.error("Error computing saldo at date:", error);
       return 0;
     }
   }
@@ -266,7 +266,7 @@ export class MovementService {
         ...(d.data() as Omit<Movement, "id">),
       }));
     } catch (error) {
-      functions.logger.error("Error fetching movements by expenseId:", error);
+      logger.error("Error fetching movements by expenseId:", error);
       return [];
     }
   }

@@ -209,6 +209,19 @@ export class MessageParser {
     return null;
   }
 
+  // ¿El texto tiene pistas de fecha que el regex no cubre? Gate barato
+  // para decidir si vale la pena el fallback LLM (ROADMAP § G.1).
+  static hasTemporalHint(text: string): boolean {
+    const n = MessageParser.normalizeForMatching(text);
+    const cues = [
+      "hace", "pasad[oa]", "proxim[oa]", "que viene", "anoche",
+      "anteanoche", "la semana", "el mes", "el ano pasado",
+      "el otro dia", "lunes", "martes", "miercoles", "jueves",
+      "viernes", "sabado", "domingo", "fin de semana",
+    ];
+    return new RegExp(`\\b(${cues.join("|")})\\b`).test(n);
+  }
+
   static parseExpenseFromText(text: string): {
     amount: number;
     description: string;

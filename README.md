@@ -4,7 +4,7 @@ Asistente de gastos por WhatsApp construido sobre **Firebase Functions + Firesto
 
 Cada gasto se vincula a una **cuenta** (wallet con saldo sincronizado vía ledger de movimientos) y cada decisión de clasificación se registra en un **historial de aprendizaje** por usuario que personaliza futuras inferencias.
 
-> Versión: 2.2.0 · Node 20 · TypeScript 5.3 · Firebase Functions v1
+> Versión: 2.2.0 · Node 20 · TypeScript 5.3 · Firebase Functions v2
 
 ---
 
@@ -53,7 +53,7 @@ Tres canales de entrada (texto / imagen / audio), un único pipeline de inferenc
 
 | Capa            | Tecnología                                     |
 |-----------------|------------------------------------------------|
-| Runtime         | Node.js 20, Firebase Functions v1              |
+| Runtime         | Node.js 20, Firebase Functions v2              |
 | Lenguaje        | TypeScript 5.3 (strict)                        |
 | Persistencia    | Firestore                                      |
 | Mensajería      | Twilio WhatsApp Business API                   |
@@ -106,14 +106,13 @@ gastos-firebase-functions/
    - `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_NUMBER`
    - `ANTHROPIC_API_KEY`
    - `OPENAI_API_KEY` (necesaria para procesar audios)
-3. **Configurar Firebase Functions Config (producción)**
+3. **Configurar Secrets v2 (producción)**
    ```bash
-   firebase functions:config:set \
-     twilio.account_sid="ACxxxxx" \
-     twilio.auth_token="xxxxx" \
-     twilio.whatsapp_number="whatsapp:+14155238886" \
-     anthropic.api_key="sk-ant-xxxxx" \
-     openai.api_key="sk-xxxxx"
+   firebase functions:secrets:set TWILIO_ACCOUNT_SID
+   firebase functions:secrets:set TWILIO_AUTH_TOKEN
+   firebase functions:secrets:set TWILIO_WHATSAPP_NUMBER
+   firebase functions:secrets:set ANTHROPIC_API_KEY
+   firebase functions:secrets:set OPENAI_API_KEY
    ```
 4. **Compilar y desplegar**
    ```bash

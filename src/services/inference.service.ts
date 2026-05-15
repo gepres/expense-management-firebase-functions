@@ -1,5 +1,5 @@
 import { getFirestore } from "firebase-admin/firestore";
-import * as functions from "firebase-functions/v1";
+import * as logger from "firebase-functions/logger";
 import {
   Category,
   PaymentMethod,
@@ -22,7 +22,7 @@ export interface ClassificationResult {
 // ¿`needle` aparece como palabra/frase completa dentro de `haystack`?
 // Ambos ya normalizados (lowercase, sin diacríticos, espacios colapsados).
 // Evita falsos positivos de substring (ej. "ropa" en "europa").
-function phraseMatches(haystack: string, needle: string): boolean {
+export function phraseMatches(haystack: string, needle: string): boolean {
   if (!needle) return false;
   const escaped = needle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(`(^|\\s)${escaped}(\\s|$)`).test(haystack);
@@ -196,7 +196,7 @@ export class InferenceService {
 
       return categories;
     } catch (error) {
-      functions.logger.error("Error getting categories:", error);
+      logger.error("Error getting categories:", error);
       return [];
     }
   }
@@ -219,7 +219,7 @@ export class InferenceService {
 
       return methods;
     } catch (error) {
-      functions.logger.error("Error getting payment methods:", error);
+      logger.error("Error getting payment methods:", error);
       return [];
     }
   }
@@ -263,10 +263,10 @@ export class InferenceService {
         return "nota_venta";
       }
 
-      functions.logger.info("No voucher type match found, using default: boleta");
+      logger.info("No voucher type match found, using default: boleta");
       return "boleta";
     } catch (error) {
-      functions.logger.error("Error inferring voucher type:", error);
+      logger.error("Error inferring voucher type:", error);
       return "boleta";
     }
   }

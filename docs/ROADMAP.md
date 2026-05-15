@@ -30,11 +30,11 @@ Hoja de ruta consolidada para la siguiente fase de desarrollo. Reemplaza las sec
 - [ ] Fix `ExpenseService.getExpenseSummary` con `month` — hoy compara strings `YYYY-MM-01` contra `Timestamp`, nunca matchea. Usar `Timestamp.fromDate(new Date(year, month-1, 1))` + cota `< Timestamp.fromDate(new Date(year, month, 1))`.
 
 ### A.3 Infraestructura
-- [ ] Migrar `firebase-functions/v1` → `v2` (mejor cold start, secrets nativos).
-- [ ] Reemplazar `functions.config()` por `defineSecret` / variables de entorno v2.
+- [x] Migrar `firebase-functions/v1` → `v2` (`onDocumentCreated`/`onRequest`).
+- [x] Reemplazar `functions.config()` por `defineSecret` (runtime → `process.env`).
 - [ ] Absorber webhook de Twilio en este repo (`twilioWebhook` HTTPS function) en lugar de la Phase 1 externa.
 - [ ] Validar firma `X-Twilio-Signature` cuando se absorba el webhook.
-- [ ] Tests con `firebase-functions-test` (ya en devDependencies, sin uso).
+- [x] Tests de lógica pura con `node:test` (`npm test`). Falta cobertura Firestore/flujo (`firebase-functions-test`).
 
 ### A.4 Producto
 - [ ] Dashboard web para visualizar gastos + saldo de cuentas.

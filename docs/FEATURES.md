@@ -134,9 +134,17 @@ Cada decisión persiste `matchedTerm` + `matchedLevel` en el expense y se regist
 - Override explícito en texto (`dólar/usd/$` → USD; `soles/sol/pen` → PEN).
 - Si no, **heredada de la cuenta activa**. Se persiste `currencySource`.
 
-### Fecha (`parseDateFromText`)
+### Fecha (`parseDateFromText` + fallback LLM)
 - Regex: `hoy`, `ayer`, `anteayer`, `YYYY-MM-DD`, `DD-MM-YYYY`, `el N de <mes>`.
-- Prioridad: fecha en texto → fecha del mensaje → (sin default de processing). Se persiste `dateSource`.
+- Si el regex falla pero hay pista temporal (`hace`, `el lunes pasado`, etc.), **fallback a Anthropic** (`parseRelativeDate`) con la fecha del mensaje como referencia.
+- Prioridad: fecha en texto (regex `dateSource: "regex"` / LLM `"llm"`) → fecha del mensaje (`"message"`).
+
+## IA en decisiones (§ G.1)
+
+Además de texto/imagen/audio, Anthropic interviene en:
+- **Fecha relativa compleja:** `parseRelativeDate` cuando el regex no resuelve y hay pista temporal.
+- **Método de pago ambiguo:** si un hint explícito no mapea, `disambiguatePaymentMethod` lo contrasta contra los métodos conocidos del usuario antes de marcar `otro`/`needsReview`.
+- **Monto atípico:** comparación estadística contra la mediana de los últimos gastos del usuario; si supera 10× la mediana (con ≥8 de histórico) se marca `amountFlagged` y se avisa. **No bloquea** (flujo async): registra y marca para revisión vía `pendientes`.
 
 ### Voucher (`inferVoucherType`)
 - `factura` | `recibo` | `nota_venta` si la descripción lo menciona; default `boleta`.
@@ -297,7 +305,7 @@ Optimizaciones pendientes en el roadmap (ver `ARCHITECTURE.md`):
 - Sanitización de input (`MessageParser.sanitizeInput`: strip `<script>`, `<`, `>`; trim a 500 chars).
 - Normalización de teléfono antes de match.
 - `firestore.rules` bloquea acceso directo a `whatsapp_queue` y `expenses`.
-- Las credenciales se resuelven vía `functions.config()` o env vars; no hay claves en código.
+- Las credenciales son secrets v2 (`defineSecret`), expuestas como `process.env.<NAME>` en runtime; no hay claves en código.
 
 ---
 

@@ -89,19 +89,21 @@ ANTHROPIC_API_KEY=sk-ant-xxxxx
 OPENAI_API_KEY=sk-xxxxx
 ```
 
-### Producción (Firebase Functions Config)
-```bash
-firebase functions:config:set \
-  twilio.account_sid="ACxxxxx" \
-  twilio.auth_token="xxxxx" \
-  twilio.whatsapp_number="whatsapp:+14155238886" \
-  anthropic.api_key="sk-ant-xxxxx" \
-  openai.api_key="sk-xxxxx"
+### Producción (Secrets v2)
 
-firebase functions:config:get   # verificar
+Las credenciales son **secrets v2** (`defineSecret`), bindeados a `processWhatsAppQueue`. Setearlos uno por uno (pide el valor por stdin):
+
+```bash
+firebase functions:secrets:set TWILIO_ACCOUNT_SID
+firebase functions:secrets:set TWILIO_AUTH_TOKEN
+firebase functions:secrets:set TWILIO_WHATSAPP_NUMBER
+firebase functions:secrets:set ANTHROPIC_API_KEY
+firebase functions:secrets:set OPENAI_API_KEY
+
+firebase functions:secrets:access ANTHROPIC_API_KEY   # verificar
 ```
 
-> Nota: `functions.config()` está deprecado en Functions v6. Si en el futuro se migra a Functions v2, reemplazar por `defineSecret` o variables de entorno.
+> En runtime los secrets quedan expuestos como `process.env.<NAME>`, que es lo que leen los services. `functions.config()` (v1) ya no se usa.
 
 ---
 
@@ -159,6 +161,7 @@ firebase deploy --only firestore:rules
 | `expenses`      | `userId` ASC, `fecha` ASC                   | `getExpenseSummary` (mes)  |
 | `expenses`      | `userId` ASC, `needsClassification` ASC     | `getPending`               |
 | `expenses`      | `userId` ASC, `needsReview` ASC             | `getPending`               |
+| `expenses`      | `userId` ASC, `amountFlagged` ASC           | `getPending` (monto atípico) |
 
 Sin estos índices, `pendientes`/`movimientos`/resumen por mes fallan en runtime. Si aparece un error de índice, Firebase entrega un enlace directo para crearlo.
 
@@ -226,21 +229,20 @@ firebase functions:list
 
 ### `Anthropic API key not configured`
 ```bash
-firebase functions:config:set anthropic.api_key="sk-ant-xxxxx"
+firebase functions:secrets:set ANTHROPIC_API_KEY
 npm run deploy
 ```
 
 ### `Twilio credentials not configured`
 ```bash
-firebase functions:config:set \
-  twilio.account_sid="ACxxxxx" \
-  twilio.auth_token="xxxxx" \
-  twilio.whatsapp_number="whatsapp:+14155238886"
+firebase functions:secrets:set TWILIO_ACCOUNT_SID
+firebase functions:secrets:set TWILIO_AUTH_TOKEN
+firebase functions:secrets:set TWILIO_WHATSAPP_NUMBER
 npm run deploy
 ```
 
 ### `OpenAI API key not configured`
-Solo afecta a audios. Idéntico al patrón anterior con `openai.api_key`.
+Solo afecta a audios. Idéntico al patrón anterior con `firebase functions:secrets:set OPENAI_API_KEY`.
 
 ### Función no se dispara
 1. `npm run logs` y filtrar por `processWhatsAppQueue`.

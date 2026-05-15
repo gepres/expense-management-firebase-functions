@@ -1,5 +1,5 @@
 import OpenAI from "openai";
-import * as functions from "firebase-functions/v1";
+import * as logger from "firebase-functions/logger";
 import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
@@ -9,7 +9,7 @@ export class TranscriptionService {
   private client: OpenAI;
 
   constructor() {
-    const apiKey = functions.config().openai?.api_key || process.env.OPENAI_API_KEY;
+    const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) {
       throw new Error("OpenAI API key not configured");
     }
@@ -27,7 +27,7 @@ export class TranscriptionService {
       // Write buffer to temporary file
       fs.writeFileSync(tempFilePath, audioBuffer);
 
-      functions.logger.info(`Transcribing audio file: ${tempFilePath}`);
+      logger.info(`Transcribing audio file: ${tempFilePath}`);
 
       // Transcribe using Whisper
       const transcription = await this.client.audio.transcriptions.create({
@@ -36,11 +36,11 @@ export class TranscriptionService {
         language: "es", // Spanish
       });
 
-      functions.logger.info("Transcription successful:", transcription.text);
+      logger.info("Transcription successful:", transcription.text);
 
       return transcription.text;
     } catch (error) {
-      functions.logger.error("Error transcribing audio:", error);
+      logger.error("Error transcribing audio:", error);
       return null;
     } finally {
       // Clean up temporary file
@@ -48,7 +48,7 @@ export class TranscriptionService {
         try {
           fs.unlinkSync(tempFilePath);
         } catch (cleanupError) {
-          functions.logger.warn("Failed to cleanup temp file:", cleanupError);
+          logger.warn("Failed to cleanup temp file:", cleanupError);
         }
       }
     }

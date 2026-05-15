@@ -6,7 +6,7 @@ Este archivo orienta a futuras sesiones de Claude Code dentro de **gastos-fireba
 
 Asistente de gastos por WhatsApp. Cloud Function que se dispara `onCreate` sobre `whatsapp_queue` en Firestore, procesa el mensaje (texto, imagen o audio), infiere categoría/método de pago/moneda y guarda el gasto en `expenses`. Responde por WhatsApp vía Twilio.
 
-- Runtime: **Node 20**, **Firebase Functions v1**, **TypeScript 5.3** (strict).
+- Runtime: **Node 20**, **Firebase Functions v2** (`onDocumentCreated`/`onRequest`), **TypeScript 5.3** (strict).
 - NLU: **Anthropic Claude `claude-sonnet-4-20250514`** (texto + Vision).
 - Audio: **OpenAI Whisper (`whisper-1`)**, idioma `es`.
 - Mensajería: **Twilio WhatsApp**.
@@ -54,15 +54,16 @@ Punto de entrada lógico: `processWhatsAppQueue` en `src/index.ts`. Toda registr
 
 - Texto: **regex primero**, Anthropic como fallback. Es más barato y más rápido.
 - Imágenes y audio: siempre van por modelo (no regex).
-- `firebase-functions/v1` por compatibilidad histórica. Migrar a `v2` está en el roadmap pero **no** se hace en cambios incidentales.
-- `functions.config()` sigue en uso aunque está deprecado en v6. Si el cambio toca esa zona, mantener compatibilidad con `process.env.*` como fallback (ya implementado en cada service).
+- **Functions v2** ya migrado. Trigger: `onDocumentCreated("whatsapp_queue/{queueId}", ...)`; `event.data` es el snapshot (guardar `if (!snap) return`), `event.params.queueId`.
+- **Secrets via `defineSecret`** (`firebase-functions/params`), declarados en `index.ts` y bindeados a `processWhatsAppQueue` vía `secrets: [...]`. En runtime quedan como `process.env.<NAME>` — los services solo leen `process.env.*` (ya no hay `functions.config()`). Setear con `firebase functions:secrets:set <NAME>`.
+- **Logging:** `import * as logger from "firebase-functions/logger"` (no `functions.logger`).
 
 ## 5. Antes de cambiar código
 
 1. **Compilación:** `npm run build`. Bloquea el deploy si falla.
 2. **Lint:** `npm run lint` (config: Google + TS plugin). Lint se ejecuta en `predeploy` (`firebase.json`).
 3. **Emulador local:** `npm run serve` levanta solo Functions. Para probar manualmente, crear un doc en `whatsapp_queue` con `status: "pending"` y `retryCount: 0`.
-4. **No hay tests automatizados todavía.** `firebase-functions-test` está instalado pero sin uso. Si añades lógica no trivial, considera dejarla testeable.
+4. **Tests:** `npm test` (runner nativo `node:test` sobre `lib/__tests__`, sin deps extra). Cubre lógica pura (`MessageParser`, `phraseMatches`, `tokenizeForLearning`). Se ejecuta en `predeploy`. Para lógica con Firestore, `firebase-functions-test` sigue disponible (sin uso aún).
 
 ## 6. Secretos y configuración
 
@@ -76,7 +77,7 @@ Cinco credenciales son necesarias:
 | `ANTHROPIC_API_KEY`     | console.anthropic.com         |
 | `OPENAI_API_KEY`        | platform.openai.com (Whisper) |
 
-Resolución en cada service: `functions.config().<scope>?.<key>` ◯ `process.env.<NAME>`. No hardcodear nunca.
+Resolución: `defineSecret` en `index.ts` → bindeado a la función → `process.env.<NAME>` en runtime → leído por cada service. Configurar con `firebase functions:secrets:set <NAME>` (NO `functions:config:set`, que era v1). Localmente, `.env` con esas mismas variables. No hardcodear nunca.
 
 ## 7. Trampas conocidas
 
@@ -103,11 +104,12 @@ Fuente única: [`docs/ROADMAP.md`](docs/ROADMAP.md). Fase "validaciones + clasif
 
 **Ya implementado (§ D #1–#11):** schemas `accounts`/`movements`/`learning_log`; `AccountService`/`MovementService`/`LearningLogService`; `saveExpense` transaccional; backfill (`npm run backfill:accounts`); cuenta activa + moneda heredada + comandos de cuenta; flujo `classify()` nuevo; validación de monto/método; parser de fecha; `finalizeAndRegisterExpense` unificado en los 3 canales; comandos wallet (`saldo`/`ingreso`/`transferir`/`movimientos`); `pendientes`/`clasificar`/`mi historial`/`olvidar historial`; idempotencia por `MessageSid`; auditoría denormalizada; índices en `firestore.indexes.json`; `getExpenseSummary` por mes arreglado; `isValidAudioType` centralizado; dead code de `InferenceService` eliminado.
 
+Además ya hecho: § G.1 (fallback LLM de fecha, monto atípico, método ambiguo), § A.3 parcial (Functions v2 + `defineSecret`), tests `node:test`.
+
 **Pendiente:**
-- § G.1 IA avanzada: fallback LLM para fechas relativas complejas, detección de monto atípico con confirmación, método de pago ambiguo vía Anthropic.
-- § A.3: migración Functions v2 + `defineSecret` + absorber webhook de Twilio + validación de firma.
-- § A.4: tests con `firebase-functions-test`, dashboard, export CSV.
-- Validación en emulador (nada de lo implementado se ejecutó en runtime aún).
+- § A.3 resto: absorber webhook de Twilio en este repo (`twilioWebhook` HTTPS) + validación de firma `X-Twilio-Signature`. Hoy el webhook vive en el Phase 1 externo.
+- § A.4 resto: dashboard web, export CSV, más cobertura de tests (Firestore/integración con `firebase-functions-test`).
+- Validación en emulador / runtime (nada se ejecutó aún; v2 + transacciones validadas solo por tipos+lint+tests de lógica pura).
 
 **Reglas críticas (siguen vigentes):**
 - `accounts.saldo` es caché; fuente de verdad `users/{uid}/movements`. Toda escritura que mueva saldo va dentro de `db.runTransaction()`.
@@ -119,11 +121,12 @@ Fuente única: [`docs/ROADMAP.md`](docs/ROADMAP.md). Fase "validaciones + clasif
 ```bash
 npm run build              # tsc → lib/
 npm run lint               # eslint
+npm test                   # build + node:test (lib/__tests__)
 npm run serve              # build + emuladores
 npm run deploy             # firebase deploy --only functions
 npm run backfill:accounts  # migración accountId (idempotente; requiere ADC)
 npm run logs               # tail logs producción
 firebase deploy --only firestore:indexes   # publicar índices
 firebase deploy --only firestore:rules     # publicar reglas
-firebase functions:config:get              # ver config remota
+firebase functions:secrets:set <NAME>      # setear un secret v2
 ```

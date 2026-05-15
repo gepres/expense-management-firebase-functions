@@ -1,4 +1,7 @@
-import * as functions from "firebase-functions/v1";
+import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import { onRequest } from "firebase-functions/v2/https";
+import { defineSecret } from "firebase-functions/params";
+import * as logger from "firebase-functions/logger";
 import * as admin from "firebase-admin";
 import { Timestamp } from "firebase-admin/firestore";
 import {
@@ -23,17 +26,40 @@ import { MediaDownloader } from "./utils/media-downloader";
 
 admin.initializeApp();
 
+// Secrets v2 (reemplazan functions.config()). Al bindearlos a la función,
+// sus valores quedan expuestos como process.env.<NAME> en runtime, que es
+// lo que leen los services.
+const TWILIO_ACCOUNT_SID = defineSecret("TWILIO_ACCOUNT_SID");
+const TWILIO_AUTH_TOKEN = defineSecret("TWILIO_AUTH_TOKEN");
+const TWILIO_WHATSAPP_NUMBER = defineSecret("TWILIO_WHATSAPP_NUMBER");
+const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
+const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
+
 /**
  * Main Cloud Function - Processes WhatsApp messages from queue
- * Supports both text and image messages
+ * Supports text, image and audio messages
  */
-export const processWhatsAppQueue = functions.firestore
-  .document("whatsapp_queue/{queueId}")
-  .onCreate(async (snap, context) => {
-    const queueId = context.params.queueId;
+export const processWhatsAppQueue = onDocumentCreated(
+  {
+    document: "whatsapp_queue/{queueId}",
+    secrets: [
+      TWILIO_ACCOUNT_SID,
+      TWILIO_AUTH_TOKEN,
+      TWILIO_WHATSAPP_NUMBER,
+      ANTHROPIC_API_KEY,
+      OPENAI_API_KEY,
+    ],
+  },
+  async (event) => {
+    const snap = event.data;
+    if (!snap) {
+      logger.warn("processWhatsAppQueue: event sin data");
+      return;
+    }
+    const queueId = event.params.queueId;
     const data = snap.data() as WhatsAppQueueDocument;
 
-    functions.logger.info(`📨 Processing queue item: ${queueId}`, {
+    logger.info(`📨 Processing queue item: ${queueId}`, {
       from: data.phoneNumber,
       hasMedia: !!data.webhookBody.MediaUrl0,
     });
@@ -52,7 +78,7 @@ export const processWhatsAppQueue = functions.firestore
       const user = await userService.findByWhatsAppPhone(phoneNumber);
 
       if (!user) {
-        functions.logger.warn(`User not registered: ${phoneNumber}`);
+        logger.warn(`User not registered: ${phoneNumber}`);
         const twilioService = new TwilioService();
         await twilioService.sendMessage(
           phoneNumber,
@@ -63,12 +89,12 @@ export const processWhatsAppQueue = functions.firestore
         return;
       }
 
-      functions.logger.info(`✅ User found: ${user.id}`);
+      logger.info(`✅ User found: ${user.id}`);
 
       // Resolve active account (session override → primary → first → lazy create)
       const accountService = new AccountService();
       const account = await accountService.resolveActiveAccount(user.id);
-      functions.logger.info(
+      logger.info(
         `💳 Active account: ${account.id} (${account.nombre}, ${account.moneda})`
       );
 
@@ -88,14 +114,14 @@ export const processWhatsAppQueue = functions.firestore
       } else if (message) {
         await processTextMessage(user, account, phoneNumber, message, snap);
       } else {
-        functions.logger.warn("Message with no text and no media");
+        logger.warn("Message with no text and no media");
         await snap.ref.update({
           status: "completed",
           error: "No content to process",
         });
       }
     } catch (error) {
-      functions.logger.error(`Error processing queue item ${queueId}:`, error);
+      logger.error(`Error processing queue item ${queueId}:`, error);
 
       const retryCount = data.retryCount || 0;
 
@@ -119,11 +145,12 @@ export const processWhatsAppQueue = functions.firestore
             "❌ Error al procesar tu mensaje después de varios intentos. Por favor intenta de nuevo más tarde."
           );
         } catch (sendError) {
-          functions.logger.error("Error sending failure notification:", sendError);
+          logger.error("Error sending failure notification:", sendError);
         }
       }
     }
-  });
+  }
+);
 
 /**
  * Process image messages (receipts, Yape/Plin screenshots)
@@ -173,7 +200,7 @@ async function processImageMessage(
     }
 
     // Extract receipt data using Anthropic Vision
-    functions.logger.info("🤖 Extracting receipt data with Anthropic Vision...");
+    logger.info("🤖 Extracting receipt data with Anthropic Vision...");
     const anthropicService = new AnthropicService();
     const extractionResult = await anthropicService.extractReceiptData(
       mediaResult.base64,
@@ -189,7 +216,7 @@ async function processImageMessage(
       return;
     }
 
-    functions.logger.info("✅ Extraction successful:", extractionResult);
+    logger.info("✅ Extraction successful:", extractionResult);
 
     // Receipt date is explicit document data extracted by Vision (LLM).
     let fechaExplicitISO: string | undefined;
@@ -222,7 +249,7 @@ async function processImageMessage(
       comercio: extractionResult.comercio,
     });
   } catch (error) {
-    functions.logger.error("Error processing image message:", error);
+    logger.error("Error processing image message:", error);
     await twilioService.sendMessage(
       phoneNumber,
       "❌ Error al procesar la imagen. Por favor intenta de nuevo."
@@ -282,7 +309,7 @@ async function processAudioMessage(
     }
 
     // Transcribe audio using Whisper
-    functions.logger.info("🎤 Transcribing audio with Whisper...");
+    logger.info("🎤 Transcribing audio with Whisper...");
     const transcriptionService = new TranscriptionService();
     const audioBuffer = Buffer.from(mediaResult.base64, "base64");
     const transcription = await transcriptionService.transcribeAudio(
@@ -299,7 +326,7 @@ async function processAudioMessage(
       return;
     }
 
-    functions.logger.info(`✅ Transcription: ${transcription}`);
+    logger.info(`✅ Transcription: ${transcription}`);
 
     // Process transcription as text message
     await twilioService.sendMessage(
@@ -333,7 +360,7 @@ async function processAudioMessage(
       successTitle: "✅ *Gasto registrado por audio!*",
     });
   } catch (error) {
-    functions.logger.error("Error processing audio message:", error);
+    logger.error("Error processing audio message:", error);
     await twilioService.sendMessage(
       phoneNumber,
       "❌ Error al procesar el audio. Por favor intenta de nuevo."
@@ -406,12 +433,12 @@ async function processTextMessage(
     }
 
     // Fallback to Anthropic for complex messages
-    functions.logger.info("Using Anthropic to parse message:", message);
+    logger.info("Using Anthropic to parse message:", message);
     const anthropicService = new AnthropicService();
     const parseResult = await anthropicService.parseExpenseMessage(message);
 
     if (!parseResult.success || !parseResult.expenseData) {
-      functions.logger.warn("Failed to parse expense:", parseResult.error);
+      logger.warn("Failed to parse expense:", parseResult.error);
       await twilioService.sendMessage(
         phoneNumber,
         "❌ No pude entender el formato del gasto.\n\n" +
@@ -439,7 +466,7 @@ async function processTextMessage(
       message
     );
   } catch (error) {
-    functions.logger.error("Error processing text message:", error);
+    logger.error("Error processing text message:", error);
     await twilioService.sendMessage(
       phoneNumber,
       "❌ Error al procesar tu mensaje. Por favor intenta de nuevo."
@@ -490,6 +517,7 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
   const inferenceService = new InferenceService();
   const expenseService = new ExpenseService();
   const learningLog = new LearningLogService();
+  const anthropicService = new AnthropicService();
   const { user, account, phoneNumber, snap } = args;
 
   const matchText = args.rawText || args.description;
@@ -515,7 +543,7 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
   if (messageSid) {
     const dup = await expenseService.findByMessageSid(messageSid);
     if (dup) {
-      functions.logger.info(
+      logger.info(
         `Duplicate messageSid ${messageSid} → expense ${dup.id}, skipping`
       );
       await twilioService.sendMessage(
@@ -537,6 +565,29 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
     args.paymentHint
   );
 
+  // § G.1: método ambiguo → desambiguar con Anthropic contra los
+  // métodos conocidos del usuario antes de marcarlo "otro"/needsReview.
+  let metodoPago = payment.metodoPago;
+  let paymentSource: typeof payment.source = payment.source;
+  let paymentNeedsReview = payment.needsReview;
+  if (paymentNeedsReview && args.paymentHint) {
+    const methods = await inferenceService.getPaymentMethods(user.id);
+    const nameToId = new Map<string, string>();
+    ["yape", "plin", "efectivo", "transferencia", "tarjeta"].forEach((d) =>
+      nameToId.set(d, d)
+    );
+    methods.forEach((mth) => nameToId.set(mth.nombre, mth.id));
+    const picked = await anthropicService.disambiguatePaymentMethod(
+      args.paymentHint,
+      Array.from(nameToId.keys())
+    );
+    if (picked) {
+      metodoPago = nameToId.get(picked) ?? picked;
+      paymentSource = "inferred";
+      paymentNeedsReview = false;
+    }
+  }
+
   const currency = args.explicitCurrency ?
     { moneda: args.explicitCurrency, source: "text" as const } :
     inferenceService.resolveCurrency(matchText, account.moneda);
@@ -551,9 +602,37 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
     if (parsed) {
       fechaISO = parsed.toISOString();
       dateSource = "regex";
+    } else if (MessageParser.hasTemporalHint(matchText)) {
+      // § G.1: el regex no resolvió pero hay pista temporal → LLM.
+      const llmDate = await anthropicService.parseRelativeDate(
+        matchText,
+        messageDate.toISOString().slice(0, 10)
+      );
+      if (llmDate) {
+        fechaISO = new Date(`${llmDate}T12:00:00`).toISOString();
+        dateSource = "llm";
+      } else {
+        fechaISO = messageDate.toISOString();
+        dateSource = "message";
+      }
     } else {
       fechaISO = messageDate.toISOString();
       dateSource = "message";
+    }
+  }
+
+  // § G.1: detección de monto atípico vs mediana del usuario. No bloquea
+  // (el flujo es async); registra el gasto y lo marca para revisión.
+  let amountFlagged = false;
+  const recentAmounts = await expenseService.getRecentAmounts(user.id, 50);
+  if (recentAmounts.length >= 8) {
+    const sorted = [...recentAmounts].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    const median = sorted.length % 2 ?
+      sorted[mid] :
+      (sorted[mid - 1] + sorted[mid]) / 2;
+    if (median > 0 && monto > median * 10) {
+      amountFlagged = true;
     }
   }
 
@@ -576,14 +655,15 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
     matchedLevel: classification.matchedLevel,
     currencySource: currency.source,
     dateSource: dateSource,
-    paymentMethodSource: payment.source,
+    paymentMethodSource: paymentSource,
     needsClassification: classification.needsClassification,
-    needsReview: payment.needsReview,
+    needsReview: paymentNeedsReview,
+    amountFlagged: amountFlagged,
     messageSid: messageSid,
   });
 
   if (!saveResult.success) {
-    functions.logger.error("Failed to save expense:", saveResult.error);
+    logger.error("Failed to save expense:", saveResult.error);
     await twilioService.sendMessage(
       phoneNumber,
       "❌ Error al registrar el gasto. Por favor intenta de nuevo."
@@ -612,7 +692,7 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
     `💰 Monto: ${currency.moneda} ${monto.toFixed(2)}\n` +
     `📝 Descripción: ${args.description}\n` +
     `🏷️ Categoría: ${classification.categoria}\n` +
-    `💳 Método: ${payment.metodoPago}`;
+    `💳 Método: ${metodoPago}`;
   if (classification.subcategoria) {
     msg += `\n📂 Subcategoría: ${classification.subcategoria}`;
   }
@@ -628,14 +708,18 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
       "Quedó como *sin_clasificar*; puedes crear la categoría/subcategoría " +
       "o escribir \"pendientes\" para clasificarlo después.";
   }
-  if (payment.needsReview) {
+  if (paymentNeedsReview) {
     msg += "\n\n⚠️ No reconocí el método de pago; quedó como *otro*. " +
       "Revísalo o créalo en tus métodos de pago.";
+  }
+  if (amountFlagged) {
+    msg += "\n\n⚠️ Este monto es inusualmente alto vs tu histórico. " +
+      "Si fue un error, escribe \"pendientes\" para corregirlo.";
   }
 
   await twilioService.sendMessage(phoneNumber, msg);
   await snap.ref.update({ status: "completed" });
-  functions.logger.info(
+  logger.info(
     `✅ ${args.channel} expense ${saveResult.expenseId} for user ${user.id}`
   );
 }
@@ -673,7 +757,7 @@ async function registerExpenseFromParsed(
     });
   } catch (error) {
     const twilioService = new TwilioService();
-    functions.logger.error("Error registering expense:", error);
+    logger.error("Error registering expense:", error);
     await twilioService.sendMessage(
       phoneNumber,
       "❌ Error al registrar el gasto. Por favor intenta de nuevo."
@@ -839,6 +923,7 @@ async function handleBotCommand(
           const flags = [
             p.needsClassification ? "sin clasificar" : null,
             p.needsReview ? "revisar método" : null,
+            p.amountFlagged ? "monto atípico" : null,
           ]
             .filter(Boolean)
             .join(", ");
@@ -931,7 +1016,7 @@ async function handleBotCommand(
     }
     }
   } catch (error) {
-    functions.logger.error("Error handling bot command:", error);
+    logger.error("Error handling bot command:", error);
     await twilioService.sendMessage(
       phoneNumber,
       "❌ Error al procesar el comando. Intenta de nuevo."
@@ -1089,7 +1174,7 @@ async function handleCommand(user: UserData, phoneNumber: string, command: strin
 /**
  * Health check endpoint
  */
-export const healthCheck = functions.https.onRequest((req, res) => {
+export const healthCheck = onRequest((req, res) => {
   res.json({
     status: "ok",
     timestamp: new Date().toISOString(),
@@ -1097,8 +1182,11 @@ export const healthCheck = functions.https.onRequest((req, res) => {
     features: {
       textParsing: true,
       imageParsing: true,
+      audioParsing: true,
       categoryInference: true,
       userValidation: true,
+      accounts: true,
+      learningLog: true,
     },
   });
 });

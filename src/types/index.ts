@@ -65,6 +65,7 @@ export interface ExpenseData extends ExpenseAuditFields {
   accountId?: string;
   needsClassification?: boolean;
   needsReview?: boolean;
+  amountFlagged?: boolean;
   messageSid?: string;
 }
 

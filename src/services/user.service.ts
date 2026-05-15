@@ -1,5 +1,5 @@
 import { getFirestore } from "firebase-admin/firestore";
-import * as functions from "firebase-functions/v1";
+import * as logger from "firebase-functions/logger";
 import { UserData } from "../types";
 
 export class UserService {
@@ -20,7 +20,7 @@ export class UserService {
         .get();
 
       if (usersSnapshot.empty) {
-        functions.logger.warn(`User not found for phone: ${normalizedPhone}`);
+        logger.warn(`User not found for phone: ${normalizedPhone}`);
         return null;
       }
 
@@ -30,7 +30,7 @@ export class UserService {
         ...userDoc.data(),
       } as UserData;
     } catch (error) {
-      functions.logger.error("Error finding user by WhatsApp phone:", error);
+      logger.error("Error finding user by WhatsApp phone:", error);
       return null;
     }
   }
@@ -43,10 +43,10 @@ export class UserService {
         updatedAt: new Date().toISOString(),
       });
 
-      functions.logger.info(`WhatsApp phone updated for user ${userId}`);
+      logger.info(`WhatsApp phone updated for user ${userId}`);
       return true;
     } catch (error) {
-      functions.logger.error("Error updating WhatsApp phone:", error);
+      logger.error("Error updating WhatsApp phone:", error);
       return false;
     }
   }
@@ -59,10 +59,10 @@ export class UserService {
         updatedAt: new Date().toISOString(),
       });
 
-      functions.logger.info(`WhatsApp phone unlinked for user ${userId}`);
+      logger.info(`WhatsApp phone unlinked for user ${userId}`);
       return true;
     } catch (error) {
-      functions.logger.error("Error unlinking WhatsApp phone:", error);
+      logger.error("Error unlinking WhatsApp phone:", error);
       return false;
     }
   }
@@ -80,7 +80,7 @@ export class UserService {
         ...userDoc.data(),
       } as UserData;
     } catch (error) {
-      functions.logger.error("Error getting user by ID:", error);
+      logger.error("Error getting user by ID:", error);
       return null;
     }
   }

@@ -8,7 +8,7 @@ Cloud Function event-driven que procesa mensajes de WhatsApp (texto, imagen, aud
 
 ## Stack
 
-- **Runtime:** Firebase Functions v1 (Node 20).
+- **Runtime:** Firebase Functions v2 (Node 20) — `onDocumentCreated` / `onRequest`.
 - **Lenguaje:** TypeScript 5.3 (strict).
 - **Persistencia:** Firestore.
 - **NLU:** Anthropic Claude `claude-sonnet-4-20250514` (texto + Vision).
@@ -146,7 +146,7 @@ Esquema completo en [`../README.md`](../README.md#modelo-de-datos-firestore).
 
 ## Configuración y secrets
 
-Variables resueltas en cascada: `functions.config().<scope>?.<key>` → `process.env.<NAME>`.
+Secrets v2 (`defineSecret` en `index.ts`) bindeados a `processWhatsAppQueue`; en runtime quedan como `process.env.<NAME>` que es lo que leen los services. Setear con `firebase functions:secrets:set <NAME>`.
 
 | Variable                | Servicio                  |
 |-------------------------|---------------------------|
@@ -156,7 +156,7 @@ Variables resueltas en cascada: `functions.config().<scope>?.<key>` → `process
 | `ANTHROPIC_API_KEY`     | Claude texto + Vision     |
 | `OPENAI_API_KEY`        | Whisper (audio)           |
 
-> `functions.config()` está deprecado desde Functions v6. Migrar a `defineSecret` está en el roadmap.
+> Migrado a Functions v2 + `defineSecret`. `functions.config()` ya no se usa.
 
 ---
 
@@ -238,11 +238,11 @@ Fallo definitivo         → status: failed + Twilio notifica
 ### 3. `voucherType` devuelto por Anthropic se ignora
 `AnthropicService.parseExpenseMessage` retorna `voucherType: "boleta"` por defecto, pero `index.ts` siempre reinfiere con `InferenceService.inferVoucherType`. Limpiar el tipo de retorno o respetar el valor.
 
-### 4. `functions.config()` deprecado
-Migrar a Functions v2 con `defineSecret` o variables de entorno de despliegue.
+### 4. ~~`functions.config()` deprecado~~ (resuelto)
+Migrado a Functions v2 + `defineSecret`. Los services leen `process.env.<NAME>`.
 
-### 5. Sin tests automatizados
-`firebase-functions-test` está en `devDependencies` pero no se usa. Añadir tests para `MessageParser`, `InferenceService` y el flujo principal.
+### 5. Tests parciales
+`npm test` (runner nativo `node:test`) cubre lógica pura: `MessageParser`, `phraseMatches`, `tokenizeForLearning`. Falta cobertura del flujo principal / Firestore (`firebase-functions-test` disponible, sin uso).
 
 ### 6. Phase 1 acoplada
 El webhook de Twilio que inserta en `whatsapp_queue` vive fuera de este repo. Considerar absorberlo aquí con una function HTTP (`twilioWebhook`) para reducir latencia y simplificar deploy.

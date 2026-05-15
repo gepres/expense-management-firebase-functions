@@ -1,5 +1,5 @@
 import axios from "axios";
-import * as functions from "firebase-functions/v1";
+import * as logger from "firebase-functions/logger";
 import { isValidAudioType, isValidImageType } from "./media-types";
 
 export class MediaDownloader {
@@ -9,14 +9,14 @@ export class MediaDownloader {
     authToken?: string
   ): Promise<{ base64: string; mimeType: string } | null> {
     try {
-      const sid = accountSid || functions.config().twilio?.account_sid || process.env.TWILIO_ACCOUNT_SID;
-      const token = authToken || functions.config().twilio?.auth_token || process.env.TWILIO_AUTH_TOKEN;
+      const sid = accountSid || process.env.TWILIO_ACCOUNT_SID;
+      const token = authToken || process.env.TWILIO_AUTH_TOKEN;
 
       if (!sid || !token) {
         throw new Error("Twilio credentials not configured");
       }
 
-      functions.logger.info(`Downloading media from: ${mediaUrl}`);
+      logger.info(`Downloading media from: ${mediaUrl}`);
 
       const response = await axios.get(mediaUrl, {
         responseType: "arraybuffer",
@@ -29,14 +29,14 @@ export class MediaDownloader {
       const base64 = Buffer.from(response.data, "binary").toString("base64");
       const mimeType = response.headers["content-type"] || "image/jpeg";
 
-      functions.logger.info(`Media downloaded successfully. Type: ${mimeType}, Size: ${base64.length} bytes`);
+      logger.info(`Media downloaded successfully. Type: ${mimeType}, Size: ${base64.length} bytes`);
 
       return {
         base64,
         mimeType,
       };
     } catch (error) {
-      functions.logger.error("Error downloading Twilio media:", error);
+      logger.error("Error downloading Twilio media:", error);
       return null;
     }
   }
