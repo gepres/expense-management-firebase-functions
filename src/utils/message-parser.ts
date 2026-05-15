@@ -157,6 +157,10 @@ export class MessageParser {
   // Comandos de bot con argumentos (ROADMAP § F.5 + § C.6 + § G.5).
   static parseBotCommand(message: string): BotCommand | null {
     const m = message.toLowerCase().trim().replace(/^\//, "");
+    // Los IDs de documento de Firestore son case-sensitive. `m` sirve para
+    // matchear keywords, pero `clasificar <id>` debe leer el ID con su
+    // capitalización original o getById nunca encuentra el doc.
+    const orig = message.trim().replace(/^\//, "");
 
     if (m === "saldos" || m === "saldo de cuentas") return { kind: "saldos" };
     if (m === "saldo" || m === "mi saldo") return { kind: "saldo" };
@@ -190,15 +194,15 @@ export class MessageParser {
       };
     }
 
-    const clasificar = m.match(
-      /^clasificar\s+(\S+)\s+(\S+)(?:\s+(\S+))?$/
+    const clasificar = orig.match(
+      /^clasificar\s+(\S+)\s+(\S+)(?:\s+(\S+))?$/i
     );
     if (clasificar) {
       return {
         kind: "clasificar",
         expenseId: clasificar[1],
-        categoria: clasificar[2],
-        subcategoria: clasificar[3],
+        categoria: clasificar[2].toLowerCase(),
+        subcategoria: clasificar[3]?.toLowerCase(),
       };
     }
 

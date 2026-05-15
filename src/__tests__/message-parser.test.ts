@@ -79,6 +79,17 @@ test("parseBotCommand", () => {
       subcategoria: "cena",
     }
   );
+  // IDs de Firestore son case-sensitive: el ID conserva mayúsculas;
+  // categoría/subcategoría se normalizan a minúsculas.
+  assert.deepEqual(
+    MessageParser.parseBotCommand("clasificar 43lUXIhJx6VHp6JYKl51 Transporte"),
+    {
+      kind: "clasificar",
+      expenseId: "43lUXIhJx6VHp6JYKl51",
+      categoria: "transporte",
+      subcategoria: undefined,
+    }
+  );
   assert.deepEqual(MessageParser.parseBotCommand("pendientes"), {
     kind: "pendientes",
   });
