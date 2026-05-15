@@ -18,7 +18,8 @@
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
     "logs": "firebase functions:log",
-    "backfill:accounts": "npm run build && node lib/scripts/backfill-accounts.js"
+    "backfill:accounts": "npm run build && node lib/scripts/backfill-accounts.js",
+    "reassign:user": "npm run build && node lib/scripts/reassign-user.js"
   },
   "engines": {
     "node": "20"
