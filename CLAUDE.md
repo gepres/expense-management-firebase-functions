@@ -79,13 +79,16 @@ Cinco credenciales son necesarias:
 | `ANTHROPIC_API_KEY`     | console.anthropic.com         |
 | `OPENAI_API_KEY`        | platform.openai.com (Whisper) |
 
-Resolución: `defineSecret` en `index.ts` → bindeado a la función → `process.env.<NAME>` en runtime → leído por cada service. Configurar con `firebase functions:secrets:set <NAME>` (NO `functions:config:set`, que era v1). Localmente, `.env` con esas mismas variables. No hardcodear nunca.
+Resolución: `defineSecret` en `index.ts` → bindeado a la función → `process.env.<NAME>` en runtime → leído por cada service. Configurar con `firebase functions:secrets:set <NAME>` (NO `functions:config:set`, que era v1). No hardcodear nunca.
+
+**Localmente** `.env` solo cubre params no-secret: con `defineSecret` el emulador sondea Google Cloud Secret Manager y lanza 404/warning si los secrets no existen ahí. El override local correcto es **`.secret.local`** (formato `CLAVE=valor`, mismas 5 variables; está en `.gitignore`). Crearlo copiando `.env`. Editarlo y reiniciar el emulador si cambia una clave.
 
 ## 7. Trampas conocidas
 
 - **Índices Firestore obligatorios:** las queries de `movements` (`accountId`+`fecha`), `learning_log` (`type`+`tokens` array-contains), `expenses` (`userId`+`createdAt`, `userId`+`fecha`, `userId`+`needsClassification`, `userId`+`needsReview`) requieren los índices de `firestore.indexes.json`. Desplegarlos con `firebase deploy --only firestore:indexes` **antes** de usar `pendientes`/`movimientos`/resumen por mes.
 - **Migración previa al deploy:** correr `npm run backfill:accounts` una vez (idempotente). Sin `accountId` los expenses históricos no aparecen en queries por cuenta. El ledger arranca en cero (no se reproducen movements históricos) — el saldo real lo fija el usuario con `ingreso`/`ajustar`.
 - **Idempotencia depende de `MessageSid`:** `finalize` salta duplicados solo si `webhookBody.MessageSid` está presente en el doc de `whatsapp_queue`. Si el Phase 1 externo no lo guarda, no hay protección anti-duplicado.
+- **Firma de Twilio omitida en emulador:** el emulador sirve la función bajo `/<project>/<region>/<fn>` y strip-ea ese prefijo → `req.url` llega como `/`, así que la URL reconstruida nunca coincide con la que Twilio firmó (URL completa) → firma siempre inválida en local. `validateTwilioRequest` (`src/utils/twilio-webhook.ts`) retorna `true` si `process.env.FUNCTIONS_EMULATOR === "true"` (esa env solo existe en el emulador, jamás en prod; en prod Cloud Run sirve la fn en la raíz y la firma se valida normal). Es un bypass de auth gateado a local — al probar con WhatsApp real vía túnel se ve el warning `validación de firma OMITIDA (emulador)`. Ver `docs/SETUP.md` §8.1.
 - **`extractReceiptData`** confía en que Anthropic devuelva JSON. Hay parseo defensivo de ```` ```json ```` pero un JSON malformado tira el flujo al `catch`. El retry lo cubre — ojo si cambias el prompt.
 - **`AnthropicService.parseExpenseMessage`** aún retorna `voucherType: "boleta"` por defecto; `finalize` lo ignora y reinfiere con `inferVoucherType`. Ruido residual, no bug.
 - **`getExpenseSummary` por mes:** ya arreglado (usa `Timestamp.fromDate` con cotas `[mes, mes+1)`).

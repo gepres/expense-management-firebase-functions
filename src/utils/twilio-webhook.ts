@@ -24,6 +24,19 @@ export function validateTwilioRequest(
   authToken: string,
   req: Request
 ): boolean {
+  // El emulador sirve la función bajo /<project>/<region>/<fn> y strip-ea
+  // ese prefijo: el código ve req.url = "/", así que la URL reconstruida
+  // nunca coincide con la que Twilio firmó (URL completa) → firma siempre
+  // inválida en local. La validación solo es fiable en prod, donde Cloud
+  // Run sirve la fn en la raíz de su propia URL. FUNCTIONS_EMULATOR lo
+  // setea Firebase solo en el emulador; en producción no existe.
+  if (process.env.FUNCTIONS_EMULATOR === "true") {
+    logger.warn(
+      "twilioWebhook: validación de firma OMITIDA (emulador). " +
+        "En producción se valida normalmente."
+    );
+    return true;
+  }
   const signature = req.headers["x-twilio-signature"];
   if (!signature || typeof signature !== "string") {
     logger.warn("twilioWebhook: falta X-Twilio-Signature");

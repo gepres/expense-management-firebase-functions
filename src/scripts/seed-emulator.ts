@@ -16,7 +16,22 @@ process.env.FIRESTORE_EMULATOR_HOST =
 
 const PROJECT_ID = process.env.GCLOUD_PROJECT || "expense-app-gepres";
 const TEST_UID = "test-user";
-const TEST_PHONE = "+51999999999";
+
+function flagValue(name: string): string | undefined {
+  const i = process.argv.indexOf(name);
+  return i !== -1 && process.argv.length > i + 1 ?
+    process.argv[i + 1] :
+    undefined;
+}
+
+// Para probar con WhatsApp real, el user sembrado debe tener TU número en
+// E.164. Override: `--phone "+51987654321"` o env SEED_PHONE. `--phone`
+// debe ir ANTES de `--enqueue` (lo que sigue a --enqueue se toma como msg).
+const TEST_PHONE = (
+  flagValue("--phone") ||
+  process.env.SEED_PHONE ||
+  "+51999999999"
+).trim();
 
 async function main(): Promise<void> {
   admin.initializeApp({ projectId: PROJECT_ID });

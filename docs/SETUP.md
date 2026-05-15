@@ -89,6 +89,8 @@ ANTHROPIC_API_KEY=sk-ant-xxxxx
 OPENAI_API_KEY=sk-xxxxx
 ```
 
+> **Emulador + secrets v2.** `.env` no basta para el emulador: con `defineSecret` Firebase sondea Google Cloud Secret Manager y lanza `404`/warning si los secrets no existen ahí. Crea **`.secret.local`** en la raíz copiando `.env` (`cp .env .secret.local`); el emulador lo usa como override local. Está en `.gitignore` — nunca se versiona. Si cambias una clave, edítalo y reinicia el emulador.
+
 ### Producción (Secrets v2)
 
 Las credenciales son **secrets v2** (`defineSecret`), bindeados a `processWhatsAppQueue`. Setearlos uno por uno (pide el valor por stdin):
@@ -123,6 +125,29 @@ UI de emuladores: http://localhost:4000
 
 Inserta un documento en `whatsapp_queue` desde la UI para probar (ver [`QUICKSTART.md`](QUICKSTART.md#opción-2--insertar-doc-de-prueba-en-firestore)).
 
+Atajo sin UI — siembra usuario/cuenta/categorías y opcionalmente encola un mensaje:
+
+```bash
+npm run seed:emulator                          # solo siembra (phone +51999999999)
+npm run seed:emulator -- --enqueue "50 almuerzo"
+npm run seed:emulator -- --phone "+51987654321"   # siembra con TU número (E.164)
+```
+
+`--phone` (o env `SEED_PHONE`) sobrescribe el número del user sembrado y **debe ir antes** de `--enqueue`. Reiniciar el emulador borra Firestore en memoria → re-sembrar.
+
+---
+
+## Paso 8.1 — Probar con WhatsApp real en local (emulador + túnel)
+
+Para un end-to-end real (mensaje desde tu WhatsApp → respuesta del bot) sin deploy: exponer el emulador con un túnel y apuntar el Sandbox de Twilio ahí.
+
+1. **3 terminales:** (1) `npm run emulator`, (2) `ngrok http 127.0.0.1:5001` — usa `127.0.0.1`, no `localhost`, para evitar que ngrok resuelva a IPv6 donde el emulador no escucha —, (3) `npm run seed:emulator -- --phone "+51TUNUMERO"`.
+2. **Verifica el túnel:** `GET https://<ngrok>/expense-app-gepres/us-central1/healthCheck` debe devolver `{"status":"ok",...}`.
+3. **Twilio Sandbox** → *"When a message comes in"* = `https://<ngrok>/expense-app-gepres/us-central1/twilioWebhook`, método **POST**, Save. (ngrok Free cambia de URL en cada reinicio → reconfigurar.)
+4. Únete al sandbox desde el WhatsApp de **ese mismo número** (`join <código>`) y envía `50 almuerzo`.
+
+> **Firma de Twilio omitida en el emulador (bypass de auth gateado a local).** El emulador sirve la función bajo `/<project>/<region>/<fn>` y strip-ea ese prefijo: el código ve `req.url = "/"`, así que la URL reconstruida (`https://<host>/`) nunca coincide con la URL completa que Twilio firmó → `403 firma inválida` siempre en local. Por eso `validateTwilioRequest` (`src/utils/twilio-webhook.ts`) retorna `true` cuando `process.env.FUNCTIONS_EMULATOR === "true"`. Esa env var **solo** la setea el emulador de Firebase; en producción no existe, y ahí Cloud Run sirve la función en la raíz de su propia URL, así que la firma se valida normalmente. En los logs del emulador verás el warning `twilioWebhook: validación de firma OMITIDA (emulador)` — es esperado en local, **nunca** debe aparecer en producción.
+
 ---
 
 ## Paso 9 — Deploy
@@ -151,7 +176,7 @@ https://us-central1-<proyecto>.cloudfunctions.net/twilioWebhook
 
 `twilioWebhook` valida `X-Twilio-Signature` con `TWILIO_AUTH_TOKEN` (rechaza `403` si no coincide) y encola en `whatsapp_queue`. Ya no hace falta el "Phase 1" externo.
 
-> Gotcha: la firma se valida contra la URL exacta que Twilio invocó. Si usas un dominio custom o proxy, el `Host`/`X-Forwarded-Host` debe coincidir con lo configurado en Twilio o la validación fallará.
+> Gotcha: la firma se valida contra la URL exacta que Twilio invocó. Si usas un dominio custom o proxy, el `Host`/`X-Forwarded-Host` debe coincidir con lo configurado en Twilio o la validación fallará. En el **emulador** la validación se omite a propósito (ver §8.1); aquí, en producción, está activa.
 
 ---
 
