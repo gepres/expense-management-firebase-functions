@@ -29,7 +29,7 @@ Cloud Function event-driven que procesa mensajes de WhatsApp (texto, imagen, aud
 ┌─────────────┐
 │   Twilio    │
 └──────┬──────┘
-       │ webhook → backend Phase 1
+       │ webhook (POST) → twilioWebhook (valida X-Twilio-Signature)
        ▼
 ┌─────────────────────┐
 │     Firestore       │   onCreate
@@ -93,8 +93,9 @@ src/
 
 | Función                | Tipo       | Trigger                                    | Responsabilidad             |
 |------------------------|------------|--------------------------------------------|-----------------------------|
-| `processWhatsAppQueue` | Background | `firestore.document("whatsapp_queue/{id}").onCreate` | Procesar mensaje entrante |
-| `healthCheck`          | HTTPS      | HTTP GET                                   | Status del servicio         |
+| `twilioWebhook`        | HTTPS      | `onRequest` (POST de Twilio)               | Validar firma + encolar     |
+| `processWhatsAppQueue` | Background | `onDocumentCreated("whatsapp_queue/{id}")` | Procesar mensaje entrante   |
+| `healthCheck`          | HTTPS      | `onRequest` (GET)                          | Status del servicio         |
 
 ---
 
@@ -102,9 +103,9 @@ src/
 
 ```
 1. Usuario envía mensaje
-2. Twilio recibe → llama webhook (sistema Phase 1, fuera de este repo)
-3. Phase 1 crea documento en whatsapp_queue (status: pending)
-4. Cloud Function trigger → onCreate
+2. Twilio recibe → POST a twilioWebhook (en este repo)
+3. twilioWebhook valida X-Twilio-Signature → crea doc en whatsapp_queue (status: pending)
+4. Cloud Function trigger → onDocumentCreated
 5. Update status: processing
 6. MessageParser.normalizePhoneNumber + sanitizeInput
 7. UserService.findByWhatsAppPhone
@@ -244,11 +245,11 @@ Migrado a Functions v2 + `defineSecret`. Los services leen `process.env.<NAME>`.
 ### 5. Tests parciales
 `npm test` (runner nativo `node:test`) cubre lógica pura: `MessageParser`, `phraseMatches`, `tokenizeForLearning`. Falta cobertura del flujo principal / Firestore (`firebase-functions-test` disponible, sin uso).
 
-### 6. Phase 1 acoplada
-El webhook de Twilio que inserta en `whatsapp_queue` vive fuera de este repo. Considerar absorberlo aquí con una function HTTP (`twilioWebhook`) para reducir latencia y simplificar deploy.
+### 6. ~~Phase 1 acoplada~~ (resuelto)
+Webhook absorbido: `twilioWebhook` (HTTPS v2) encola en `whatsapp_queue`. Ya no hay sistema externo.
 
-### 7. Validación del webhook de Twilio
-No se valida la firma `X-Twilio-Signature` (responsabilidad del Phase 1 actual). Si se absorbe el webhook, añadir validación.
+### 7. ~~Validación del webhook de Twilio~~ (resuelto)
+`twilioWebhook` valida `X-Twilio-Signature` con `TWILIO_AUTH_TOKEN` (403 si falla). Gotcha: la firma depende de la URL exacta — con dominio custom/proxy, `Host`/`X-Forwarded-Host` debe coincidir con lo configurado en Twilio.
 
 ### 8. Lecturas redundantes de categorías
 Cada mensaje hace una lectura completa de `users/{uid}/categories` y posiblemente otra de `payment_methods`. Cache simple por invocación (Map en memoria) reduciría costo en bursts.

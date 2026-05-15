@@ -32,8 +32,8 @@ Hoja de ruta consolidada para la siguiente fase de desarrollo. Reemplaza las sec
 ### A.3 Infraestructura
 - [x] Migrar `firebase-functions/v1` → `v2` (`onDocumentCreated`/`onRequest`).
 - [x] Reemplazar `functions.config()` por `defineSecret` (runtime → `process.env`).
-- [ ] Absorber webhook de Twilio en este repo (`twilioWebhook` HTTPS function) en lugar de la Phase 1 externa.
-- [ ] Validar firma `X-Twilio-Signature` cuando se absorba el webhook.
+- [x] Absorber webhook de Twilio en este repo (`twilioWebhook` HTTPS function) en lugar de la Phase 1 externa.
+- [x] Validar firma `X-Twilio-Signature` (rechaza 403 si inválida).
 - [x] Tests de lógica pura con `node:test` (`npm test`). Falta cobertura Firestore/flujo (`firebase-functions-test`).
 
 ### A.4 Producto

@@ -23,6 +23,10 @@ import { LearningLogService } from "./services/learning-log.service";
 import { TranscriptionService } from "./services/transcription.service";
 import { MessageParser } from "./utils/message-parser";
 import { MediaDownloader } from "./utils/media-downloader";
+import {
+  validateTwilioRequest,
+  buildQueueDocFromTwilio,
+} from "./utils/twilio-webhook";
 
 admin.initializeApp();
 
@@ -1170,6 +1174,51 @@ async function handleCommand(user: UserData, phoneNumber: string, command: strin
   }
   }
 }
+
+/**
+ * Twilio WhatsApp webhook. Valida X-Twilio-Signature y encola el mensaje
+ * en whatsapp_queue (lo procesa processWhatsAppQueue vía onCreate).
+ * Reemplaza el "Phase 1" externo. ROADMAP § A.3.
+ */
+export const twilioWebhook = onRequest(
+  { secrets: [TWILIO_AUTH_TOKEN] },
+  async (req, res) => {
+    if (req.method !== "POST") {
+      res.status(405).send("Method Not Allowed");
+      return;
+    }
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    if (!authToken) {
+      logger.error("twilioWebhook: TWILIO_AUTH_TOKEN no configurado");
+      res.status(500).send("Server misconfigured");
+      return;
+    }
+    if (!validateTwilioRequest(authToken, req)) {
+      res.status(403).send("Invalid signature");
+      return;
+    }
+    const body = (req.body || {}) as Record<string, string>;
+    if (!body.From) {
+      res.status(400).send("Missing From");
+      return;
+    }
+    try {
+      const doc = buildQueueDocFromTwilio(body);
+      await admin
+        .firestore()
+        .collection("whatsapp_queue")
+        .add({ ...doc, createdAt: Timestamp.now() });
+      logger.info(
+        `twilioWebhook: encolado ${doc.webhookBody.MessageSid}`
+      );
+      res.set("Content-Type", "text/xml");
+      res.status(200).send("<Response></Response>");
+    } catch (error) {
+      logger.error("twilioWebhook: error encolando", error);
+      res.status(500).send("Internal error");
+    }
+  }
+);
 
 /**
  * Health check endpoint

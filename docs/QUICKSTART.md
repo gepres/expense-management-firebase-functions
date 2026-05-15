@@ -123,9 +123,9 @@ firebase functions:config:get
 
 ## Siguientes pasos
 
-1. Configurar webhook real de Twilio que inserte en `whatsapp_queue`.
+1. Apuntar el webhook de Twilio (POST) a la URL de `twilioWebhook` — valida firma y encola solo. Ver [`SETUP.md`](SETUP.md) Paso 9.1.
 2. Probar con WhatsApp real (sandbox).
-3. Crear índices Firestore si aparece error de query (Firebase ofrece link directo).
-4. Definir reglas de seguridad finales en `firestore.rules`.
+3. Desplegar índices: `firebase deploy --only firestore:indexes`.
+4. Correr la migración una vez: `npm run backfill:accounts`.
 
 Documentación completa: [`README`](../README.md) · [`FEATURES`](FEATURES.md) · [`EXAMPLES`](EXAMPLES.md)

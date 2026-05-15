@@ -29,7 +29,7 @@ Cada gasto se vincula a una **cuenta** (wallet con saldo sincronizado vía ledge
 Usuario (WhatsApp)
       │
       ▼
-   Twilio  ──webhook──►  Backend Phase 1  ──insert──►  whatsapp_queue (Firestore)
+   Twilio ──webhook──► twilioWebhook (HTTPS, valida firma) ──insert──► whatsapp_queue (Firestore)
                                                               │ onCreate
                                                               ▼
                                                   processWhatsAppQueue (Cloud Function)
@@ -139,8 +139,12 @@ gastos-firebase-functions/
   6. `TwilioService.sendMessage` envía confirmación.
   7. En error: reintenta hasta 3 veces (estado vuelve a `pending`, incrementa `retryCount`). Tras 3 fallos pasa a `failed` y notifica al usuario.
 
+### `twilioWebhook`
+- **Tipo:** HTTPS (v2 `onRequest`)
+- **Flujo:** valida `X-Twilio-Signature` (403 si inválida), mapea el POST de Twilio y encola en `whatsapp_queue` (`status: "pending"`). Responde TwiML vacío `200`. Reemplaza la Phase 1 externa.
+
 ### `healthCheck`
-- **Tipo:** HTTPS
+- **Tipo:** HTTPS (v2 `onRequest`)
 - **Respuesta:** JSON con `status`, `timestamp`, `service` y flags de features activas.
 
 ---

@@ -4,7 +4,7 @@ Este archivo orienta a futuras sesiones de Claude Code dentro de **gastos-fireba
 
 ## 1. ¿Qué es este proyecto?
 
-Asistente de gastos por WhatsApp. Cloud Function que se dispara `onCreate` sobre `whatsapp_queue` en Firestore, procesa el mensaje (texto, imagen o audio), infiere categoría/método de pago/moneda y guarda el gasto en `expenses`. Responde por WhatsApp vía Twilio.
+Asistente de gastos por WhatsApp. `twilioWebhook` (HTTPS, valida `X-Twilio-Signature`) recibe el mensaje y lo encola en `whatsapp_queue`; `processWhatsAppQueue` (`onDocumentCreated`) lo procesa (texto, imagen o audio), infiere categoría/método/moneda/cuenta y guarda el gasto en `expenses`. Responde por WhatsApp vía Twilio. El "Phase 1" externo ya está absorbido en este repo.
 
 - Runtime: **Node 20**, **Firebase Functions v2** (`onDocumentCreated`/`onRequest`), **TypeScript 5.3** (strict).
 - NLU: **Anthropic Claude `claude-sonnet-4-20250514`** (texto + Vision).
@@ -30,6 +30,7 @@ src/utils/
   message-parser.ts                   ← normalizeForMatching, validateAmount, parseDateFromText, parsers de comandos
   media-downloader.ts                 ← descarga media de Twilio con basic auth
   media-types.ts                      ← fuente única de tipos de media (audio/imagen)
+  twilio-webhook.ts                   ← validación X-Twilio-Signature + mapper a queue doc
 src/scripts/
   backfill-accounts.ts                ← migración idempotente: accountId en expenses históricos
 ```

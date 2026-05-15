@@ -135,9 +135,23 @@ firebase deploy --only functions
 Salida esperada:
 ```
 functions[processWhatsAppQueue(us-central1)] Successful create.
+functions[twilioWebhook(us-central1)] Successful create.
 functions[healthCheck(us-central1)] Successful create.
+Function URL (twilioWebhook): https://us-central1-<proyecto>.cloudfunctions.net/twilioWebhook
 Function URL (healthCheck): https://us-central1-<proyecto>.cloudfunctions.net/healthCheck
 ```
+
+## Paso 9.1 — Apuntar Twilio al webhook
+
+En la consola de Twilio (Sandbox o número productivo de WhatsApp), configurar **"When a message comes in"** con la URL de `twilioWebhook` (método **POST**):
+
+```
+https://us-central1-<proyecto>.cloudfunctions.net/twilioWebhook
+```
+
+`twilioWebhook` valida `X-Twilio-Signature` con `TWILIO_AUTH_TOKEN` (rechaza `403` si no coincide) y encola en `whatsapp_queue`. Ya no hace falta el "Phase 1" externo.
+
+> Gotcha: la firma se valida contra la URL exacta que Twilio invocó. Si usas un dominio custom o proxy, el `Host`/`X-Forwarded-Host` debe coincidir con lo configurado en Twilio o la validación fallará.
 
 ---
 
