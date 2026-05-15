@@ -176,7 +176,7 @@ https://us-central1-<proyecto>.cloudfunctions.net/twilioWebhook
 
 `twilioWebhook` valida `X-Twilio-Signature` con `TWILIO_AUTH_TOKEN` (rechaza `403` si no coincide) y encola en `whatsapp_queue`. Ya no hace falta el "Phase 1" externo.
 
-> Gotcha: la firma se valida contra la URL exacta que Twilio invocó. Si usas un dominio custom o proxy, el `Host`/`X-Forwarded-Host` debe coincidir con lo configurado en Twilio o la validación fallará. En el **emulador** la validación se omite a propósito (ver §8.1); aquí, en producción, está activa.
+> **Gotcha crítico (Cloud Run v2): hay que setear `TWILIO_WEBHOOK_URL`.** Twilio firma la URL **exacta** que tiene configurada. En Functions v2 (Cloud Run, alias `cloudfunctions.net/twilioWebhook`) el path se strip-ea: el código ve `req.url="/"`, reconstruye `https://host/` (sin `/twilioWebhook`) y la firma **nunca cuadra** → `403 firma inválida` (se ve en logs con la `url` reconstruida en la raíz). Fix: en `.env` setear `TWILIO_WEBHOOK_URL` = la URL **idéntica** a la puesta en Twilio, p. ej. `https://us-central1-<proyecto>.cloudfunctions.net/twilioWebhook`. `validateTwilioRequest` valida contra esa env si está; si no, cae a la reconstrucción (que en v2 falla). Tras setearla, redeploy: `firebase deploy --only functions:twilioWebhook`. En el **emulador** la validación se omite (ver §8.1).
 
 ---
 

@@ -83,7 +83,9 @@ Cinco credenciales son necesarias:
 
 Resolución: `defineSecret` en `index.ts` → bindeado a la función → `process.env.<NAME>` en runtime → leído por cada service. Configurar con `firebase functions:secrets:set <NAME>` (NO `functions:config:set`, que era v1). No hardcodear nunca.
 
-**Localmente** `.env` solo cubre params no-secret: con `defineSecret` el emulador sondea Google Cloud Secret Manager y lanza 404/warning si los secrets no existen ahí. El override local correcto es **`.secret.local`** (formato `CLAVE=valor`, mismas 5 variables; está en `.gitignore`). Crearlo copiando `.env`. Editarlo y reiniciar el emulador si cambia una clave.
+**Localmente** `.env` solo cubre params no-secret: con `defineSecret` el emulador sondea Google Cloud Secret Manager y lanza 404/warning si los secrets no existen ahí. El override local correcto es **`.secret.local`** (formato `CLAVE=valor`, mismas 5 variables; está en `.gitignore`). Crearlo copiando los valores. Editarlo y reiniciar el emulador si cambia una clave. Los secrets **no** van en `.env` (rompe el deploy v2: "Secret environment variable overlaps non secret environment variable").
+
+**Var no-secreta requerida en prod:** `TWILIO_WEBHOOK_URL` (en `.env`, bundled al deploy) = la URL **exacta** configurada en Twilio. Sin ella, en Cloud Run v2 la validación de firma falla siempre (el path se strip-ea, `req.url="/"`; ver §7 y `docs/SETUP.md` §9.1).
 
 ## 7. Trampas conocidas
 
