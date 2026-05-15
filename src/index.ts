@@ -27,6 +27,7 @@ import {
   validateTwilioRequest,
   buildQueueDocFromTwilio,
 } from "./utils/twilio-webhook";
+import { toCsv } from "./utils/csv";
 
 admin.initializeApp();
 
@@ -1219,6 +1220,75 @@ export const twilioWebhook = onRequest(
     }
   }
 );
+
+/**
+ * Export de gastos en CSV. Requiere `Authorization: Bearer <Firebase ID
+ * token>`; exporta solo los expenses del uid del token. Query opcional
+ * `?month=YYYY-MM`. Backend-shaped: habilita un dashboard/export sin abrir
+ * `firestore.rules` a lectura directa. ROADMAP § A.4.
+ */
+export const exportExpenses = onRequest(async (req, res) => {
+  if (req.method !== "GET") {
+    res.status(405).send("Method Not Allowed");
+    return;
+  }
+  const authz = (req.headers.authorization as string) || "";
+  const bearer = authz.match(/^Bearer (.+)$/);
+  if (!bearer) {
+    res.status(401).send("Missing bearer token");
+    return;
+  }
+  let uid: string;
+  try {
+    const decoded = await admin.auth().verifyIdToken(bearer[1]);
+    uid = decoded.uid;
+  } catch (error) {
+    logger.warn("exportExpenses: token inválido", error);
+    res.status(401).send("Invalid token");
+    return;
+  }
+
+  const monthQ =
+    typeof req.query.month === "string" ? req.query.month : undefined;
+  const month = monthQ && /^\d{4}-\d{2}$/.test(monthQ) ? monthQ : undefined;
+
+  try {
+    const expenseService = new ExpenseService();
+    const rows = await expenseService.getForExport(uid, month);
+    const headers = [
+      "fecha",
+      "monto",
+      "moneda",
+      "categoria",
+      "subcategoria",
+      "descripcion",
+      "metodoPago",
+      "voucherType",
+      "accountId",
+    ];
+    const csv = toCsv(
+      headers,
+      rows.map((r) => [
+        r.fecha,
+        r.monto,
+        r.moneda,
+        r.categoria,
+        r.subcategoria,
+        r.descripcion,
+        r.metodoPago,
+        r.voucherType,
+        r.accountId,
+      ])
+    );
+    const fname = `gastos${month ? "-" + month : ""}.csv`;
+    res.set("Content-Type", "text/csv; charset=utf-8");
+    res.set("Content-Disposition", `attachment; filename="${fname}"`);
+    res.status(200).send(csv);
+  } catch (error) {
+    logger.error("exportExpenses: error", error);
+    res.status(500).send("Internal error");
+  }
+});
 
 /**
  * Health check endpoint

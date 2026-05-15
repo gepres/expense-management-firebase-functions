@@ -143,6 +143,12 @@ gastos-firebase-functions/
 - **Tipo:** HTTPS (v2 `onRequest`)
 - **Flujo:** valida `X-Twilio-Signature` (403 si inválida), mapea el POST de Twilio y encola en `whatsapp_queue` (`status: "pending"`). Responde TwiML vacío `200`. Reemplaza la Phase 1 externa.
 
+### `exportExpenses`
+- **Tipo:** HTTPS (v2 `onRequest`)
+- **Auth:** `Authorization: Bearer <Firebase ID token>` — exporta solo los gastos del `uid` del token.
+- **Query:** `?month=YYYY-MM` opcional.
+- **Respuesta:** `text/csv` (adjunto). Habilita un dashboard/export sin abrir `firestore.rules` a lectura directa.
+
 ### `healthCheck`
 - **Tipo:** HTTPS (v2 `onRequest`)
 - **Respuesta:** JSON con `status`, `timestamp`, `service` y flags de features activas.

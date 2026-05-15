@@ -315,4 +315,61 @@ export class ExpenseService {
       };
     }
   }
+
+  // Filas planas para export CSV (§ A.4). Filtro opcional por mes
+  // ("YYYY-MM"). fecha en ISO. Límite alto para no truncar el export.
+  async getForExport(
+    userId: string,
+    month?: string,
+    limit: number = 5000
+  ): Promise<ExportExpenseRow[]> {
+    try {
+      let query: FirebaseFirestore.Query = this.db
+        .collection("expenses")
+        .where("userId", "==", userId);
+
+      if (month) {
+        const [y, m] = month.split("-").map((n) => parseInt(n, 10));
+        const start = Timestamp.fromDate(new Date(y, m - 1, 1));
+        const end = Timestamp.fromDate(new Date(y, m, 1));
+        query = query
+          .where("fecha", ">=", start)
+          .where("fecha", "<", end);
+      }
+
+      const snapshot = await query.limit(limit).get();
+      return snapshot.docs.map((doc) => {
+        const d = doc.data();
+        const fecha: FirebaseFirestore.Timestamp | undefined = d.fecha;
+        return {
+          id: doc.id,
+          fecha: fecha ? fecha.toDate().toISOString() : "",
+          monto: d.monto,
+          moneda: d.moneda,
+          categoria: d.categoria,
+          subcategoria: d.subcategoria ?? "",
+          descripcion: d.descripcion,
+          metodoPago: d.metodoPago,
+          voucherType: d.voucherType,
+          accountId: d.accountId ?? "",
+        };
+      });
+    } catch (error) {
+      logger.error("Error fetching expenses for export:", error);
+      return [];
+    }
+  }
+}
+
+export interface ExportExpenseRow {
+  id: string;
+  fecha: string;
+  monto: number;
+  moneda: string;
+  categoria: string;
+  subcategoria: string;
+  descripcion: string;
+  metodoPago: string;
+  voucherType: string;
+  accountId: string;
 }

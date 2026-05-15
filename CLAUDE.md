@@ -14,7 +14,7 @@ Asistente de gastos por WhatsApp. `twilioWebhook` (HTTPS, valida `X-Twilio-Signa
 ## 2. Mapa del código
 
 ```
-src/index.ts                          ← trigger + orquestación + finalizeAndRegisterExpense + comandos
+src/index.ts                          ← funciones (twilioWebhook, processWhatsAppQueue, exportExpenses, healthCheck) + finalizeAndRegisterExpense + comandos
 src/types/index.ts                    ← interfaces compartidas (incl. Account, Movement, LearningLog, BotCommand)
 src/services/
   anthropic.service.ts                ← parseExpenseMessage + extractReceiptData (Vision)
@@ -31,6 +31,7 @@ src/utils/
   media-downloader.ts                 ← descarga media de Twilio con basic auth
   media-types.ts                      ← fuente única de tipos de media (audio/imagen)
   twilio-webhook.ts                   ← validación X-Twilio-Signature + mapper a queue doc
+  csv.ts                              ← serializador CSV (RFC 4180) para exportExpenses
 src/scripts/
   backfill-accounts.ts                ← migración idempotente: accountId en expenses históricos
 ```

@@ -37,8 +37,8 @@ Hoja de ruta consolidada para la siguiente fase de desarrollo. Reemplaza las sec
 - [x] Tests de lógica pura con `node:test` (`npm test`). Falta cobertura Firestore/flujo (`firebase-functions-test`).
 
 ### A.4 Producto
-- [ ] Dashboard web para visualizar gastos + saldo de cuentas.
-- [ ] Export CSV / Excel (gastos + movements + learning_log).
+- [~] Export: `exportExpenses` (HTTPS, CSV de `expenses`, auth por Firebase ID token). Falta export de `movements`/`learning_log` y formato Excel.
+- [ ] Dashboard web — **proyecto frontend aparte** (fuera de este repo de Functions). El backend ya lo habilita vía `exportExpenses` (no requiere abrir `firestore.rules`).
 - [ ] Alertas de presupuesto + alertas de saldo bajo (§ F.3).
 
 ---
