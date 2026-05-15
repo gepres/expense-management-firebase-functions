@@ -34,6 +34,7 @@ export type MatchedLevel =
   | "subcategory"
   | "category"
   | "history"
+  | "llm"
   | "user_correction"
   | "default";
 

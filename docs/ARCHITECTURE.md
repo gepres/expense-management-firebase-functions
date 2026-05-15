@@ -249,10 +249,20 @@ Migrado a Functions v2 + `defineSecret`. Los services leen `process.env.<NAME>`.
 Webhook absorbido: `twilioWebhook` (HTTPS v2) encola en `whatsapp_queue`. Ya no hay sistema externo.
 
 ### 7. ~~Validación del webhook de Twilio~~ (resuelto)
-`twilioWebhook` valida `X-Twilio-Signature` con `TWILIO_AUTH_TOKEN` (403 si falla). Gotcha: la firma depende de la URL exacta — con dominio custom/proxy, `Host`/`X-Forwarded-Host` debe coincidir con lo configurado en Twilio.
+`twilioWebhook` valida `X-Twilio-Signature` con `TWILIO_AUTH_TOKEN` (403 si falla). Gotcha: la firma depende de la URL exacta — con dominio custom/proxy, `Host`/`X-Forwarded-Host` debe coincidir con lo configurado en Twilio. **En el emulador la validación se omite a propósito** (`FUNCTIONS_EMULATOR==="true"`): el emulador strip-ea el prefijo de ruta y la URL reconstruida nunca coincide con la firmada. Solo aplica en local; en prod se valida normal (`SETUP.md` §8.1).
 
 ### 8. Lecturas redundantes de categorías
 Cada mensaje hace una lectura completa de `users/{uid}/categories` y posiblemente otra de `payment_methods`. Cache simple por invocación (Map en memoria) reduciría costo en bursts.
+
+### 9. ~~`recordUserFeedback` sin uso → "correcciones primero" no se aplica~~ (resuelto)
+Era: `queryRelevant` ordenaba por `userFeedback` (campo que nadie escribía) → el desempate del paso 4 era solo recencia, no "corrección > automático". **Fix:** `queryRelevant` ahora prioriza por `type/decision.source === "user_correction"` (`learning-log.service.ts`), y la selección del paso 4 de `classify` rankea `corrección > score de solape > recencia`. `recordUserFeedback` sigue disponible (sin uso) por si se popula `userFeedback` a futuro.
+
+### 10. Clasificación: relación de contenido (propuesta E→C implementada)
+Era: descripción libre ↔ taxonomía solo por `phraseMatches` exacto; historial sin scoring; señal semántica del LLM descartada. **Implementado:**
+- **E (hecho):** paso 4 elige por solape de tokens (`tokenOverlap`, overlap coef, umbral `MIN_HISTORY_OVERLAP=0.5`), priorizando correcciones. Resolvió también #9.
+- **C (hecho):** nuevo paso 5 `matchedLevel:"llm"` **tras** 1–4: **5a** reusa (sin costo) la categoría libre que el LLM ya devolvió, mapeada a la taxonomía vía `categoryIdForTerm`; **5b** si no hay hint o no mapea (camino regex), llamada acotada `AnthropicService.classifyAgainstTaxonomy` (devuelve una categoría del usuario o null). Cost-aware: solo se ejecuta si 1–4 fallan.
+- **B:** subsumido en 5a (mapeo de la categoría libre del LLM).
+- **D (pendiente, opcional):** embeddings + coseno en memoria como techo, solo si E+C no alcanzan en la práctica.
 
 ---
 

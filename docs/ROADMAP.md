@@ -25,6 +25,9 @@ Hoja de ruta consolidada para la siguiente fase de desarrollo. Reemplaza las sec
 - [ ] Centralizar `isValidAudioType` (duplicado en `media-downloader.ts` y `transcription.service.ts`).
 - [ ] Limpiar `voucherType` devuelto por `AnthropicService.parseExpenseMessage` (hoy se ignora en `index.ts`).
 - [ ] Cache por invocación de `users/{uid}/categories` y `users/{uid}/payment_methods` (evita 1..N lecturas por mensaje).
+- [x] Bug latente `recordUserFeedback`: el paso 4 ahora prioriza `user_correction` (no el campo `userFeedback` muerto). `ARCHITECTURE.md` #9.
+- [x] Relación de contenido en `classify` — **E** (historial por solape de tokens, `tokenOverlap`) + **C** (paso 5 LLM acotado a la taxonomía, reusa hint / llama solo en miss). `ARCHITECTURE.md` #10.
+- [ ] **D (opcional):** embeddings + coseno en memoria para clasificación/historial, solo si E+C no alcanzan en la práctica.
 
 ### A.2 Reportes
 - [ ] Fix `ExpenseService.getExpenseSummary` con `month` — hoy compara strings `YYYY-MM-01` contra `Timestamp`, nunca matchea. Usar `Timestamp.fromDate(new Date(year, month-1, 1))` + cota `< Timestamp.fromDate(new Date(year, month, 1))`.

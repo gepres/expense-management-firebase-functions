@@ -7,9 +7,19 @@ import {
   PaymentMethodSource,
 } from "../types";
 import { MessageParser } from "../utils/message-parser";
-import { LearningLogService } from "./learning-log.service";
+import {
+  LearningLogService,
+  tokenizeForLearning,
+  tokenOverlap,
+} from "./learning-log.service";
+import { AnthropicService } from "./anthropic.service";
 
 export const UNCLASSIFIED_CATEGORY = "sin_clasificar";
+
+// Solape mínimo de tokens para reusar una decisión del historial (paso 4).
+// Evita falsos positivos por 1 token común entre descripciones largas;
+// una corrección corta contenida en la nueva descripción da overlap 1.
+export const MIN_HISTORY_OVERLAP = 0.5;
 
 export interface ClassificationResult {
   categoria: string;
@@ -28,6 +38,32 @@ export function phraseMatches(haystack: string, needle: string): boolean {
   return new RegExp(`(^|\\s)${escaped}(\\s|$)`).test(haystack);
 }
 
+// Mapea un término (hint libre del LLM o candidato elegido) a una
+// categoría del usuario por `id` exacto o `nombre` (palabra completa,
+// en cualquier dirección). null si no corresponde. ROADMAP § A.1 (C).
+export function categoryIdForTerm(
+  term: string,
+  categories: Category[]
+): string | null {
+  const norm = MessageParser.normalizeForMatching(term);
+  if (!norm) return null;
+  for (const cat of categories) {
+    if (cat.id && MessageParser.normalizeForMatching(cat.id) === norm) {
+      return cat.id;
+    }
+    const nameNorm = MessageParser.normalizeForMatching(cat.nombre || "");
+    if (
+      nameNorm &&
+      (nameNorm === norm ||
+        phraseMatches(norm, nameNorm) ||
+        phraseMatches(nameNorm, norm))
+    ) {
+      return cat.id;
+    }
+  }
+  return null;
+}
+
 export class InferenceService {
   private db: FirebaseFirestore.Firestore;
   private learningLog: LearningLogService;
@@ -37,15 +73,17 @@ export class InferenceService {
     this.learningLog = new LearningLogService();
   }
 
-  // Flujo de clasificación ROADMAP § B.5 + § G.3:
+  // Flujo de clasificación ROADMAP § B.5 + § G.3 + § A.1 (C):
   //   1. suggestions_ideas → subcategoría dueña → categoría dueña
   //   2. nombre de subcategoría → categoría dueña
   //   3. nombre de categoría → subcategoría null
-  //   4. historial del usuario (learning_log)
-  //   5. sin_clasificar (needsClassification)
+  //   4. historial del usuario (learning_log), por similitud de tokens
+  //   5. LLM acotado a la taxonomía (reusa hint libre; llamada solo en miss)
+  //   6. sin_clasificar (needsClassification)
   async classify(
     userId: string,
-    description: string
+    description: string,
+    llmCategoryHint?: string
   ): Promise<ClassificationResult> {
     const norm = MessageParser.normalizeForMatching(description);
     const categories = await this.getCategories(userId);
@@ -101,31 +139,93 @@ export class InferenceService {
     // 4. historial del usuario: correcciones explícitas (`user_correction`)
     // o clasificaciones previas reales. Nunca reusar el centinela
     // `sin_clasificar` (no se "aprende" a quedarse sin clasificar).
+    // Se elige por similitud (solape de tokens ≥ MIN_HISTORY_OVERLAP),
+    // priorizando correcciones del usuario, no la primera por recencia.
     const history = await this.learningLog.queryRelevant(userId, norm, {
-      limit: 10,
+      limit: 20,
     });
-    const fromHistory = history.find((e) => {
-      if (e.decision.field !== "categoria") return false;
-      const value = e.userFeedback?.correctedValue ?? e.decision.value;
-      return (
-        typeof value === "string" &&
-        value !== "" &&
-        value !== UNCLASSIFIED_CATEGORY
-      );
-    });
-    if (fromHistory) {
-      const corrected = fromHistory.userFeedback?.correctedValue;
-      const categoria = String(corrected ?? fromHistory.decision.value);
+    const qTokens = tokenizeForLearning(norm);
+    const best = history
+      .filter((e) => {
+        if (e.decision.field !== "categoria") return false;
+        const value = e.userFeedback?.correctedValue ?? e.decision.value;
+        return (
+          typeof value === "string" &&
+          value !== "" &&
+          value !== UNCLASSIFIED_CATEGORY
+        );
+      })
+      .map((e) => ({
+        e,
+        isCorrection:
+          e.type === "user_correction" ||
+          e.decision.source === "user_correction" ||
+          !!e.userFeedback,
+        score: tokenOverlap(qTokens, e.tokens ?? []),
+      }))
+      .filter((c) => c.score >= MIN_HISTORY_OVERLAP)
+      .sort((a, b) => {
+        if (a.isCorrection !== b.isCorrection) return a.isCorrection ? -1 : 1;
+        if (b.score !== a.score) return b.score - a.score;
+        return b.e.createdAt.toMillis() - a.e.createdAt.toMillis();
+      })[0]?.e;
+    if (best) {
+      const corrected = best.userFeedback?.correctedValue;
+      const categoria = String(corrected ?? best.decision.value);
       return {
         categoria,
         subcategoria: null,
-        matchedTerm: fromHistory.input.normalized,
+        matchedTerm: best.input.normalized,
         matchedLevel: "history",
         needsClassification: false,
       };
     }
 
-    // 5. sin clasificar
+    // 5. LLM acotado a la taxonomía del usuario (ROADMAP § A.1, opción C).
+    // Solo si 1–4 fallaron. 5a: reusar el hint libre que el LLM ya
+    // devolvió (canal imagen/audio/fallback) — costo cero. 5b: si no hay
+    // hint o no mapea (camino regex), 1 llamada acotada a las categorías.
+    if (categories.length > 0) {
+      if (llmCategoryHint) {
+        const mapped = categoryIdForTerm(llmCategoryHint, categories);
+        if (mapped) {
+          return {
+            categoria: mapped,
+            subcategoria: null,
+            matchedTerm: llmCategoryHint,
+            matchedLevel: "llm",
+            needsClassification: false,
+          };
+        }
+      }
+      const candidates = categories
+        .map((c) => c.nombre)
+        .filter((n): n is string => !!n);
+      if (candidates.length > 0) {
+        try {
+          const picked = await new AnthropicService().classifyAgainstTaxonomy(
+            description,
+            candidates
+          );
+          const mapped = picked ?
+            categoryIdForTerm(picked, categories) :
+            null;
+          if (mapped) {
+            return {
+              categoria: mapped,
+              subcategoria: null,
+              matchedTerm: picked,
+              matchedLevel: "llm",
+              needsClassification: false,
+            };
+          }
+        } catch (error) {
+          logger.error("LLM taxonomy classification failed:", error);
+        }
+      }
+    }
+
+    // 6. sin clasificar
     return {
       categoria: UNCLASSIFIED_CATEGORY,
       subcategoria: null,

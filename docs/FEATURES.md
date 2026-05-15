@@ -120,10 +120,13 @@ Orden estricto, match por **palabra/frase completa** sobre texto normalizado (si
 1. `suggestions_ideas` de subcategorías → adopta subcategoría dueña + su categoría.
 2. Nombre de subcategoría → su categoría.
 3. Nombre de categoría → categoría, subcategoría `null`.
-4. **Historial del usuario** (`learning_log`): si una decisión previa similar existe (prioriza correcciones del usuario), se adopta.
-5. Sin match → `categoria: "sin_clasificar"`, `needsClassification: true`.
+4. **Historial del usuario** (`learning_log`): se elige por **similitud de tokens** (overlap coef ≥ 0.5), priorizando correcciones explícitas (`user_correction`) sobre decisiones automáticas — ya no "la primera por recencia".
+5. **LLM acotado a tu taxonomía** (solo si 1–4 fallan): **5a** reusa, sin costo, la categoría libre que el LLM ya devolvió en imagen/audio/fallback de texto y la mapea a tus categorías; **5b** si no hay hint o no mapea (camino regex), 1 llamada acotada a Anthropic que devuelve una categoría tuya o nada.
+6. Sin match → `categoria: "sin_clasificar"`, `needsClassification: true`.
 
-Cada decisión persiste `matchedTerm` + `matchedLevel` en el expense y se registra en `learning_log`.
+> **La categoría del LLM ya NO se descarta** (cambio § A.1 opción C). Se usa como **fallback acotado a tu taxonomía** tras el match exacto (1–3) e historial (4): el LLM nunca inventa categorías fuera de las tuyas, solo elige entre ellas o `sin_clasificar`. Costo controlado: en imagen/audio/fallback se reusa la llamada ya hecha; en el camino regex solo se llama si 1–4 fallan.
+
+`matchedLevel` persistido en el expense (auditoría): `suggestion` (1) · `subcategory` (2) · `category` (3) · `history` (4) · `llm` (5) · `default` (6, = sin_clasificar). Pasos 1–3 = match por palabra completa exacto (sin plural/sinónimo/semántica).
 
 ### Método de pago (`resolvePaymentMethod`)
 1. Token explícito en texto (`yape/plin/efectivo/transferencia/tarjeta` o método del usuario).
@@ -152,6 +155,9 @@ Además de texto/imagen/audio, Anthropic interviene en:
 ## Historial de aprendizaje (`learning_log`)
 
 Append-only por usuario. Cada decisión de clasificación se registra; el comando `clasificar` añade una corrección (`user_correction`) que **retroalimenta** futuras clasificaciones (paso 4 de `classify`). Soft delete con `olvidar historial`.
+
+- **Recuperación + scoring:** el paso 4 recupera candidatos por `learning_log.tokens` (Firestore `array-contains-any`, tokens ≥3 chars sin stopwords ES, máx 10) y luego **elige por solape de tokens** (overlap coef = |∩|/min, umbral 0.5), priorizando `user_correction`. Una corrección corta ("taxi") sigue aplicando a descripciones más largas que la contienen.
+- **`clasificar <id>` — el ID es _case-sensitive_.** Los IDs de documento Firestore distinguen mayúsculas. Copia/pega el ID exacto que muestra `pendientes` (no lo reescribas a mano). `parseBotCommand` conserva su capitalización; `categoria`/`subcategoria` se normalizan a minúsculas.
 
 ## Idempotencia
 

@@ -280,6 +280,43 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
     }
   }
 
+  // Clasifica una descripción contra las categorías del usuario
+  // (ROADMAP § A.1 opción C). Solo se invoca como fallback (taxonomía
+  // exacta + historial fallaron). Devuelve un candidato EXACTO de la
+  // lista o null si ninguno corresponde con confianza.
+  async classifyAgainstTaxonomy(
+    description: string,
+    candidates: string[]
+  ): Promise<string | null> {
+    if (candidates.length === 0) return null;
+    try {
+      const prompt =
+        "Clasifica el gasto en UNA de las categorías del usuario.\n" +
+        `Descripción: "${description}"\n` +
+        `Categorías: ${JSON.stringify(candidates)}\n\n` +
+        "Responde SOLO con JSON {\"categoria\": \"<categoría EXACTA de " +
+        "la lista>\"} o {\"categoria\": null} si ninguna corresponde con " +
+        "confianza razonable. SOLO el JSON.";
+
+      const response = await this.client.messages.create({
+        model: "claude-sonnet-4-20250514",
+        max_tokens: 128,
+        messages: [{ role: "user", content: prompt }],
+      });
+
+      const content = response.content[0];
+      if (content.type !== "text") return null;
+      const parsed = JSON.parse(this.extractJson(content.text.trim()));
+      if (!parsed.categoria || typeof parsed.categoria !== "string") {
+        return null;
+      }
+      return candidates.includes(parsed.categoria) ? parsed.categoria : null;
+    } catch (error) {
+      logger.error("Error classifying against taxonomy:", error);
+      return null;
+    }
+  }
+
   // Desambigua un método de pago contra los conocidos del usuario
   // (ROADMAP § G.1). Devuelve un candidato exacto de la lista o null.
   async disambiguatePaymentMethod(

@@ -250,6 +250,7 @@ async function processImageMessage(
       successTitle: "✅ *Gasto registrado por imagen!*",
       explicitCurrency: extractionResult.moneda || undefined,
       paymentHint: extractionResult.metodoPago,
+      categoryHint: extractionResult.categoria || undefined,
       fechaExplicitISO: fechaExplicitISO,
       comercio: extractionResult.comercio,
     });
@@ -363,6 +364,7 @@ async function processAudioMessage(
       description: parseResult.expenseData.descripcion,
       amount: parseResult.expenseData.monto,
       successTitle: "✅ *Gasto registrado por audio!*",
+      categoryHint: parseResult.expenseData.categoria || undefined,
     });
   } catch (error) {
     logger.error("Error processing audio message:", error);
@@ -468,7 +470,8 @@ async function processTextMessage(
       parseResult.expenseData.monto,
       parseResult.expenseData.descripcion,
       snap,
-      message
+      message,
+      parseResult.expenseData.categoria
     );
   } catch (error) {
     logger.error("Error processing text message:", error);
@@ -490,6 +493,8 @@ async function processTextMessage(
  */
 function levelToSource(level: string): LearningSource {
   if (level === "history") return "history";
+  if (level === "llm") return "llm";
+  if (level === "user_correction") return "user_correction";
   if (level === "default") return "default";
   return "regex";
 }
@@ -506,6 +511,7 @@ interface FinalizeArgs {
   successTitle: string;
   explicitCurrency?: string;
   paymentHint?: string;
+  categoryHint?: string;
   fechaExplicitISO?: string;
   comercio?: string;
 }
@@ -562,7 +568,8 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
 
   const classification = await inferenceService.classify(
     user.id,
-    matchText
+    matchText,
+    args.categoryHint
   );
   const payment = await inferenceService.resolvePaymentMethod(
     user.id,
@@ -738,6 +745,8 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
  * @param {string} description - Expense description
  * @param {FirebaseFirestore.DocumentSnapshot} snap - Firestore document snapshot
  * @param {string} rawText - Original message text
+ * @param {string} [categoryHint] - Free-form category from the LLM (only
+ *   when parsed by Anthropic; regex path has none)
  */
 async function registerExpenseFromParsed(
   user: UserData,
@@ -746,7 +755,8 @@ async function registerExpenseFromParsed(
   amount: number,
   description: string,
   snap: FirebaseFirestore.DocumentSnapshot,
-  rawText: string
+  rawText: string,
+  categoryHint?: string
 ): Promise<void> {
   try {
     await finalizeAndRegisterExpense({
@@ -759,6 +769,7 @@ async function registerExpenseFromParsed(
       description: description,
       amount: amount,
       successTitle: "✅ *Gasto registrado exitosamente!*",
+      categoryHint: categoryHint,
     });
   } catch (error) {
     const twilioService = new TwilioService();

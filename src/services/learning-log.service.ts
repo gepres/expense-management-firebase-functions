@@ -35,6 +35,21 @@ export function tokenizeForLearning(normalized: string): string[] {
   return unique.slice(0, 10);
 }
 
+// Solape entre dos sets de tokens: |∩| / min(|a|,|b|) (overlap coef).
+// Más tolerante que Jaccard a diferencias de longitud: una corrección
+// corta ("taxi") debe seguir aplicando a "taxi al centro comercial".
+// 0 si alguno está vacío. Tokens ya únicos (tokenizeForLearning).
+export function tokenOverlap(a: string[], b: string[]): number {
+  if (a.length === 0 || b.length === 0) return 0;
+  const setA = new Set(a);
+  const setB = new Set(b);
+  let inter = 0;
+  for (const t of setA) {
+    if (setB.has(t)) inter++;
+  }
+  return inter / Math.min(setA.size, setB.size);
+}
+
 // Bitácora append-only de decisiones de inferencia para personalizar
 // futuras decisiones del bot por usuario. ROADMAP § G.
 export class LearningLogService {
@@ -108,11 +123,18 @@ export class LearningLogService {
       const entries = snap.docs
         .map((d) => ({ id: d.id, ...(d.data() as Omit<LearningLogEntry, "id">) }))
         .filter((e) => !e.deletedAt);
-      // Correcciones explícitas primero (señal más fuerte).
+      // Correcciones explícitas primero (señal más fuerte). El marcador
+      // real de corrección es `type`/`decision.source === "user_correction"`
+      // (el comando `clasificar` hace append de una entrada nueva, no setea
+      // `userFeedback`; se mantiene en el OR por si algún día se popula).
+      const isCorrection = (e: LearningLogEntry): boolean =>
+        e.type === "user_correction" ||
+        e.decision.source === "user_correction" ||
+        !!e.userFeedback;
       entries.sort((a, b) => {
-        const aHasFeedback = a.userFeedback ? 1 : 0;
-        const bHasFeedback = b.userFeedback ? 1 : 0;
-        if (aHasFeedback !== bHasFeedback) return bHasFeedback - aHasFeedback;
+        const ac = isCorrection(a) ? 1 : 0;
+        const bc = isCorrection(b) ? 1 : 0;
+        if (ac !== bc) return bc - ac;
         return b.createdAt.toMillis() - a.createdAt.toMillis();
       });
       return entries;
