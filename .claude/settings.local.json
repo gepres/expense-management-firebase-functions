@@ -11,7 +11,10 @@
       "Bash(node --test \"lib/**/*.test.js\")",
       "Bash(read f *)",
       "Bash(node -e 'const fs=require\\('\\\\''fs'\\\\''\\);let s=fs.readFileSync\\('\\\\''__TRACKED_VAR__'\\\\'','\\\\''utf8'\\\\''\\);s=s.replace\\(/functions\\\\.logger/g,'\\\\''logger'\\\\''\\);fs.writeFileSync\\('\\\\''__TRACKED_VAR__'\\\\'',s\\);')",
-      "Bash(node -e 'const fs=require\\('\\\\''fs'\\\\''\\);let s=fs.readFileSync\\('\\\\''__TRACKED_VAR__'\\\\'','\\\\''utf8'\\\\''\\);s=s.replace\\('\\\\''import * as functions from \"firebase-functions/v1\";'\\\\'','\\\\''import * as logger from \"firebase-functions/logger\";'\\\\''\\);fs.writeFileSync\\('\\\\''__TRACKED_VAR__'\\\\'',s\\);')"
+      "Bash(node -e 'const fs=require\\('\\\\''fs'\\\\''\\);let s=fs.readFileSync\\('\\\\''__TRACKED_VAR__'\\\\'','\\\\''utf8'\\\\''\\);s=s.replace\\('\\\\''import * as functions from \"firebase-functions/v1\";'\\\\'','\\\\''import * as logger from \"firebase-functions/logger\";'\\\\''\\);fs.writeFileSync\\('\\\\''__TRACKED_VAR__'\\\\'',s\\);')",
+      "Bash(java -version)",
+      "Bash(firebase --version)",
+      "PowerShell(Get-NetTCPConnection *)"
     ]
   }
 }

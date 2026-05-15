@@ -54,14 +54,28 @@ export class LearningLogService {
   ): Promise<string | null> {
     try {
       const docRef = this.col(userId).doc();
-      const doc: Omit<LearningLogEntry, "id"> = {
-        expenseId: entry.expenseId,
+      // Firestore rechaza `undefined` (incl. anidado): podar opcionales.
+      const decision: Record<string, unknown> = {
+        field: entry.decision.field,
+        value: entry.decision.value,
+        source: entry.decision.source,
+      };
+      if (entry.decision.matchedTerm !== undefined) {
+        decision.matchedTerm = entry.decision.matchedTerm;
+      }
+      if (entry.decision.confidence !== undefined) {
+        decision.confidence = entry.decision.confidence;
+      }
+      const doc: Record<string, unknown> = {
         type: entry.type,
         input: entry.input,
-        decision: entry.decision,
+        decision,
         tokens: tokenizeForLearning(entry.input.normalized),
         createdAt: Timestamp.now(),
       };
+      if (entry.expenseId !== undefined) {
+        doc.expenseId = entry.expenseId;
+      }
       await docRef.set(doc);
       return docRef.id;
     } catch (error) {

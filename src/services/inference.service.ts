@@ -98,14 +98,21 @@ export class InferenceService {
       }
     }
 
-    // 4. historial del usuario
+    // 4. historial del usuario: correcciones explícitas (`user_correction`)
+    // o clasificaciones previas reales. Nunca reusar el centinela
+    // `sin_clasificar` (no se "aprende" a quedarse sin clasificar).
     const history = await this.learningLog.queryRelevant(userId, norm, {
-      type: "classification",
       limit: 10,
     });
-    const fromHistory = history.find(
-      (e) => e.decision.field === "categoria" && e.decision.value
-    );
+    const fromHistory = history.find((e) => {
+      if (e.decision.field !== "categoria") return false;
+      const value = e.userFeedback?.correctedValue ?? e.decision.value;
+      return (
+        typeof value === "string" &&
+        value !== "" &&
+        value !== UNCLASSIFIED_CATEGORY
+      );
+    });
     if (fromHistory) {
       const corrected = fromHistory.userFeedback?.correctedValue;
       const categoria = String(corrected ?? fromHistory.decision.value);

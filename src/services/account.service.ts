@@ -89,22 +89,25 @@ export class AccountService {
       const now = Timestamp.now();
       const saldoInicial = input.saldoInicial ?? 0;
       const docRef = this.accountsCol(userId).doc();
-      const account: Omit<Account, "id"> = {
+      // Firestore rechaza `undefined`: omitir opcionales ausentes.
+      const account: Record<string, unknown> = {
         nombre: input.nombre,
         isPrimary: input.isPrimary ?? false,
         moneda: input.moneda,
-        tipo: input.tipo,
         saldo: saldoInicial,
         saldoInicial,
-        saldoMinimoAlerta: input.saldoMinimoAlerta,
         createdAt: now,
         updatedAt: now,
       };
+      if (input.tipo !== undefined) account.tipo = input.tipo;
+      if (input.saldoMinimoAlerta !== undefined) {
+        account.saldoMinimoAlerta = input.saldoMinimoAlerta;
+      }
       await docRef.set(account);
       logger.info(
         `Account created for user ${userId}: ${docRef.id} (${input.nombre})`
       );
-      return { id: docRef.id, ...account };
+      return { id: docRef.id, ...(account as Omit<Account, "id">) };
     } catch (error) {
       logger.error("Error creating account:", error);
       return null;

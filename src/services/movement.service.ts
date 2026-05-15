@@ -87,20 +87,27 @@ export class MovementService {
     const saldoAnterior = account.saldo;
     const saldoNuevo = saldoAnterior + signo * input.monto;
 
-    const movementDoc: Omit<Movement, "id"> = {
+    // Firestore rechaza `undefined`: solo incluir opcionales presentes.
+    const movementDoc: Record<string, unknown> = {
       accountId: input.accountId,
       tipo: input.tipo,
       monto: input.monto,
       signoEfectivo: signo,
-      expenseId: input.expenseId,
-      transferPairId: input.transferPairId,
       descripcion: input.descripcion,
       fecha: input.fecha,
       saldoAnterior,
       saldoNuevo,
-      metadata: input.metadata,
       createdAt: now,
     };
+    if (input.expenseId !== undefined) {
+      movementDoc.expenseId = input.expenseId;
+    }
+    if (input.transferPairId !== undefined) {
+      movementDoc.transferPairId = input.transferPairId;
+    }
+    if (input.metadata !== undefined) {
+      movementDoc.metadata = input.metadata;
+    }
 
     tx.set(movementRef, movementDoc);
     tx.update(accountRef, { saldo: saldoNuevo, updatedAt: now });
