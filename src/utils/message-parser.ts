@@ -47,15 +47,13 @@ export class MessageParser {
   ): { isCommand: boolean; command?: string } {
     const lowerMessage = message.toLowerCase().trim();
 
+    // "ayuda"/"comandos"/"menu" los maneja parseHelpCommand (soporta
+    // "ayuda <tema>"), no este mapa.
     const commandMap: Record<string, string> = {
       "resumen": "resumen",
       "summary": "resumen",
       "total": "resumen",
       "ver gastos": "resumen",
-      "ayuda": "ayuda",
-      "help": "ayuda",
-      "comandos": "ayuda",
-      "commands": "ayuda",
       "hola": "inicio",
       "hi": "inicio",
       "inicio": "inicio",
@@ -81,6 +79,24 @@ export class MessageParser {
     if (m === "cuenta principal") return { kind: "primary" };
     const useMatch = m.match(/^usar cuenta\s+(.+)$/);
     if (useMatch) return { kind: "use", nombre: useMatch[1].trim() };
+    return null;
+  }
+
+  // Comando de ayuda: "ayuda" / "ayuda <tema>" (aliases: help, comandos,
+  // commands, menu/menú; con o sin "/"). Devuelve el resto NORMALIZADO
+  // (sin tildes, minúsculas) para que el caller lo resuelva a un tema vía
+  // resolveHelpTopic. `rest` vacío → menú. null → no es comando de ayuda.
+  static parseHelpCommand(message: string): { rest: string } | null {
+    const m = MessageParser.normalizeForMatching(
+      message.trim().replace(/^\//, "")
+    );
+    const keys = ["ayuda", "help", "comandos", "commands", "menu"];
+    for (const k of keys) {
+      if (m === k) return { rest: "" };
+      if (m.startsWith(`${k} `)) {
+        return { rest: m.slice(k.length).trim() };
+      }
+    }
     return null;
   }
 

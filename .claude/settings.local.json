@@ -46,7 +46,19 @@
       "Skill(claude-api)",
       "WebSearch",
       "PowerShell(npm install *)",
-      "PowerShell(npm *)"
+      "PowerShell(npm *)",
+      "Bash(grep -iE \"\\\\.json$|export|project|firebase\")",
+      "Read(//c/Users/User/**)",
+      "Read(//d/PROYECTOS/**)",
+      "Bash(echo \"exitcode:$?\")",
+      "Bash(node -e ' *)",
+      "Bash(node _compare.cjs)",
+      "Bash(node -e 'const a=require\\(\"./projects-to-add.json\"\\);console.log\\(\"válido · items:\",a.length\\);console.log\\(JSON.stringify\\(a[19],null,2\\)\\)')",
+      "Bash(rm _compare.cjs)",
+      "Bash(node -e 'const a=require\\(\"./projects-to-add.json\"\\);console.log\\(\"to-add válido · items:\",a.length\\);const p=require\\(\"./projects-export.json\"\\);const o=p.find\\(x=>x.id===\"wE8i9g90XRNv63XpUUxV\"\\);console.log\\(\"2020 oficios githubUrl →\", o.githubUrl\\);console.log\\(\"gepres-blogs-servidor en to-add?\", a.some\\(x=>/gepres-blogs-servidor/.test\\(x.githubUrl\\)\\)\\);console.log\\(\"2020oficios en to-add?\", a.some\\(x=>/2020oficios/.test\\(x.githubUrl\\)\\)\\);')",
+      "Bash(cat .firebaserc)",
+      "Bash(cat firebase.json)",
+      "Bash(node -e 'const p=require\\(\"./package.json\"\\);console.log\\(\"scripts:\",JSON.stringify\\(p.scripts,null,1\\)\\);console.log\\(\"deps:\",Object.keys\\(p.dependencies||{}\\).join\\(\", \"\\)\\);console.log\\(\"devDeps:\",Object.keys\\(p.devDependencies||{}\\).join\\(\", \"\\)\\)')"
     ]
   }
 }

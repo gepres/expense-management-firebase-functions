@@ -26,8 +26,12 @@ src/services/
   account.service.ts                  ← cuentas + resolución de cuenta activa + sesión wsp
   movement.service.ts                 ← ledger append-only (writeMovement/transfer), fuente de verdad del saldo
   learning-log.service.ts             ← bitácora de decisiones por usuario (queryRelevant/append/feedback)
+  onboarding.service.ts               ← marca primer contacto (idempotente) para el onboarding auto
   user.service.ts                     ← lookup por whatsappPhone
   twilio.service.ts                   ← sendMessage
+src/config/
+  models.ts                           ← resuelve modelo + thinking/effort por tier (modelParams/transcribeModel)
+  help.ts                             ← FUENTE ÚNICA de ayuda/onboarding (menú + temas + bienvenida)
 src/utils/
   message-parser.ts                   ← normalizeForMatching, validateAmount, parseDateFromText, parsers de comandos
   media-downloader.ts                 ← descarga media de Twilio con basic auth
@@ -43,6 +47,7 @@ Punto de entrada lógico: `processWhatsAppQueue` en `src/index.ts`. Toda registr
 ## 3. Convenciones del repo
 
 - **Idioma de los mensajes/UX:** español (Perú). Soles, Yape, Plin, "bodega", etc.
+- **Ayuda/onboarding:** fuente única en `src/config/help.ts` (`HELP_TOPICS`). El menú (`ayuda`), los temas (`ayuda <clave>`) y la bienvenida se generan de ahí. Al agregar un flujo nuevo, añadir/editar su entrada en `HELP_TOPICS` (aparece solo en el menú) — **no** hardcodear textos de comandos en `index.ts`. Onboarding automático en el 1er contacto tras vincular WhatsApp vía `OnboardingService.tryClaimFirstContact` (idempotente; guard: si ya hay `learning_log` no se saluda — usuario previo a la feature). Cada mensaje debe caber en ~1600 chars (límite WhatsApp); hay tests que lo verifican.
 - **Identidad del gasto:** vinculado por `userId` + `accountId`, **no** por `phoneNumber`. El teléfono solo resuelve al usuario.
 - **Cuenta activa:** todo gasto va a una cuenta (`AccountService.resolveActiveAccount`: sesión wsp → primary → primera → crea "Principal" lazy). Sin `accountId`, `saveExpense` rechaza.
 - **Saldo:** `accounts.saldo` es **caché denormalizado**. La fuente de verdad es `users/{uid}/movements` (ledger append-only). `saveExpense` escribe expense + movement + saldo en **una sola `db.runTransaction()`**. Nunca romper esa atomicidad.

@@ -20,7 +20,14 @@ import { AccountService } from "./services/account.service";
 import { MovementService } from "./services/movement.service";
 import { InferenceService } from "./services/inference.service";
 import { LearningLogService } from "./services/learning-log.service";
+import { OnboardingService } from "./services/onboarding.service";
 import { TranscriptionService } from "./services/transcription.service";
+import {
+  buildHelpMenu,
+  buildHelpTopic,
+  buildOnboarding,
+  resolveHelpTopic,
+} from "./config/help";
 import { MessageParser } from "./utils/message-parser";
 import { MediaDownloader } from "./utils/media-downloader";
 import {
@@ -95,6 +102,36 @@ export const processWhatsAppQueue = onDocumentCreated(
       }
 
       logger.info(`✅ User found: ${user.id}`);
+
+      // Onboarding automático en el primer contacto tras vincular WhatsApp.
+      // Idempotente (no se repite en reintentos de Twilio). Guard: si el
+      // usuario ya tiene historial de aprendizaje es alguien previo a esta
+      // feature → no lo saludamos (evita spam tras el deploy).
+      const onboardingService = new OnboardingService();
+      const claimedFirstContact =
+        await onboardingService.tryClaimFirstContact(user.id);
+      if (claimedFirstContact) {
+        const priorLog = await new LearningLogService().getRecent(user.id, 1);
+        if (priorLog.length === 0) {
+          const twilioService = new TwilioService();
+          await twilioService.sendMessage(
+            phoneNumber,
+            buildOnboarding(user.name, true)
+          );
+          // Si el primer mensaje era solo un saludo/ayuda/vacío, la
+          // bienvenida ya lo respondió: cerramos sin re-procesar (evita
+          // doble bienvenida). Si trajo un gasto/comando real, seguimos.
+          const greetingOnly =
+            !MessageParser.hasMedia(data.webhookBody) &&
+            (!message ||
+              MessageParser.isCommandMessage(message).command === "inicio" ||
+              MessageParser.parseHelpCommand(message) !== null);
+          if (greetingOnly) {
+            await snap.ref.update({ status: "completed" });
+            return;
+          }
+        }
+      }
 
       // Resolve active account (session override → primary → first → lazy create)
       const accountService = new AccountService();
@@ -409,6 +446,18 @@ async function processTextMessage(
     const botCommand = MessageParser.parseBotCommand(message);
     if (botCommand) {
       await handleBotCommand(user, account, phoneNumber, botCommand);
+      await snap.ref.update({ status: "completed" });
+      return;
+    }
+
+    // Ayuda: "ayuda" (menú) / "ayuda <tema>" (detalle).
+    const helpCmd = MessageParser.parseHelpCommand(message);
+    if (helpCmd) {
+      const topic = resolveHelpTopic(helpCmd.rest);
+      await twilioService.sendMessage(
+        phoneNumber,
+        topic ? buildHelpTopic(topic) : buildHelpMenu()
+      );
       await snap.ref.update({ status: "completed" });
       return;
     }
@@ -1144,37 +1193,11 @@ async function handleCommand(user: UserData, phoneNumber: string, command: strin
     break;
   }
 
-  case "ayuda": {
-    const message = "🤖 *Asistente de Gastos Inteligente*\n\n" +
-        "📝 *Registrar gasto:*\n" +
-        "Envía el monto y descripción:\n" +
-        "• \"50 almuerzo\"\n" +
-        "• \"25.50 taxi con yape\"\n" +
-        "• \"Gasté 100 en supermercado\"\n\n" +
-        "📷 *Registrar con foto:*\n" +
-        "Envía una foto de:\n" +
-        "• Comprobante de pago\n" +
-        "• Captura de Yape/Plin\n" +
-        "• Boleta o factura\n\n" +
-        "📊 *Ver resumen:*\n" +
-        "Escribe \"resumen\"\n\n" +
-        "¡Empieza a registrar tus gastos ahora! 💸";
-
-    await twilioService.sendMessage(phoneNumber, message);
-    break;
-  }
-
   case "inicio": {
-    const message = `👋 ¡Hola ${user.name || "Usuario"}!\n\n` +
-        "Bienvenido a tu Asistente de Gastos Inteligente.\n\n" +
-        "Puedes registrar gastos de dos formas:\n\n" +
-        "📝 *Escribe el gasto:*\n" +
-        "\"50 almuerzo\"\n\n" +
-        "📷 *Envía una foto:*\n" +
-        "De tu comprobante o captura de pago\n\n" +
-        "Escribe \"ayuda\" para ver todos los comandos.";
-
-    await twilioService.sendMessage(phoneNumber, message);
+    await twilioService.sendMessage(
+      phoneNumber,
+      buildOnboarding(user.name)
+    );
     break;
   }
 

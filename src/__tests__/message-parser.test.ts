@@ -102,6 +102,21 @@ test("parseBotCommand", () => {
   assert.equal(MessageParser.parseBotCommand("50 almuerzo"), null);
 });
 
+test("parseHelpCommand", () => {
+  assert.deepEqual(MessageParser.parseHelpCommand("ayuda"), { rest: "" });
+  assert.deepEqual(MessageParser.parseHelpCommand("/ayuda"), { rest: "" });
+  assert.deepEqual(MessageParser.parseHelpCommand("Comandos"), { rest: "" });
+  assert.deepEqual(MessageParser.parseHelpCommand("menú"), { rest: "" });
+  assert.deepEqual(MessageParser.parseHelpCommand("ayuda gastos"), {
+    rest: "gastos",
+  });
+  assert.deepEqual(MessageParser.parseHelpCommand("AYUDA  Saldo"), {
+    rest: "saldo",
+  });
+  assert.equal(MessageParser.parseHelpCommand("50 almuerzo"), null);
+  assert.equal(MessageParser.parseHelpCommand("ayudame con esto"), null);
+});
+
 test("hasTemporalHint", () => {
   assert.equal(
     MessageParser.hasTemporalHint("lo compré hace una semana"),

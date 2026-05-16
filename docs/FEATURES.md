@@ -44,9 +44,9 @@ Si el texto exacto es uno de los siguientes, se trata como comando y no como gas
 |----------|-----------------------------------------------|
 | `inicio` | `hola`, `hi`, `start`                          |
 | `resumen`| `summary`, `total`, `ver gastos`               |
-| `ayuda`  | `help`, `comandos`, `commands`                 |
+| `ayuda`  | `help`, `comandos`, `commands`, `menu`; soporta `ayuda <tema>` |
 
-También se aceptan prefijos `/comando` (ej: `/resumen`).
+`ayuda` lo resuelve `MessageParser.parseHelpCommand` (no `isCommandMessage`): acepta `ayuda` (menú) o `ayuda <tema>` (gastos/cuentas/saldo/pendientes/historial, con aliases y normalización de tildes). También se aceptan prefijos `/comando` (ej: `/resumen`).
 
 ---
 
@@ -186,10 +186,18 @@ Reintentos: máximo **3**. El `retryCount` se incrementa y el doc vuelve a `pend
 
 ---
 
+## Onboarding (primer contacto)
+
+La primera vez que un usuario registrado escribe tras vincular su WhatsApp, el bot envía automáticamente la bienvenida (`buildOnboarding`) antes de procesar el mensaje. Detalles:
+
+- **Idempotente:** `OnboardingService.tryClaimFirstContact` crea un marcador en `users/{uid}/sessions/onboarding`; un reintento de Twilio o un duplicado en la cola **no** vuelve a saludar.
+- **Guard anti-spam:** si el usuario ya tiene entradas en `learning_log` (usuario previo a esta feature) se reclama el marcador en silencio y **no** se saluda.
+- **No pierde el primer mensaje:** si el primer mensaje era solo un saludo/`ayuda`/vacío, la bienvenida ya respondió y se cierra. Si traía un gasto o comando real, se procesa normalmente después de saludar.
+
 ## Comandos disponibles
 
 ### `inicio`
-Mensaje de bienvenida personalizado con el `user.name`.
+Bienvenida (`buildOnboarding`, fuente única `src/config/help.ts`), personalizada con `user.name`. Mismo contenido que el onboarding automático (sin la línea de "número vinculado").
 
 ### `resumen`
 Total + breakdown por categoría:
@@ -207,8 +215,13 @@ Por categoría:
 
 > **Nota técnica:** `getExpenseSummary` acepta un parámetro `month` que actualmente no funciona (compara string `YYYY-MM-DD` contra `Timestamp`). Ver `docs/ARCHITECTURE.md` → "Trampas conocidas".
 
-### `ayuda`
-Lista compacta de formatos y comandos.
+### `ayuda` / `ayuda <tema>`
+Sistema de ayuda en dos niveles (fuente única `src/config/help.ts`, escalable: agregar un flujo = editar `HELP_TOPICS`):
+
+- `ayuda` → menú compacto que lista todas las áreas con su pista y el comando para el detalle.
+- `ayuda <tema>` → detalle con ejemplos. Temas: `gastos`, `cuentas`, `saldo`, `pendientes`, `historial` (cada uno con aliases, p. ej. `ayuda foto` → gastos, `ayuda dinero` → saldo).
+
+Cada mensaje cabe en un solo WhatsApp (~1600 chars, verificado por tests).
 
 ### Cuentas y wallet
 | Comando | Acción |
@@ -325,4 +338,4 @@ Optimizaciones pendientes en el roadmap (ver `ARCHITECTURE.md`):
 
 ---
 
-**Última actualización:** 2026-05-12
+**Última actualización:** 2026-05-16
