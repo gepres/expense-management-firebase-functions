@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AnthropicResponse, ExpenseData, ReceiptExtractionResult } from "../types";
+import { modelParams } from "../config/models";
 import * as logger from "firebase-functions/logger";
 
 export class AnthropicService {
@@ -53,7 +54,9 @@ export class AnthropicService {
         "- NO incluyas texto adicional fuera del JSON, SOLO el objeto JSON";
 
       const response = await this.client.messages.create({
-        model: "claude-sonnet-4-20250514",
+        // Comprobante (vision) → tier "primary". modelParams resuelve modelo
+        // + thinking/effort desde env (src/config/models.ts).
+        ...modelParams("primary"),
         max_tokens: 1024,
         messages: [{
           role: "user",
@@ -159,7 +162,8 @@ Ejemplos:
 NO incluyas texto adicional, SOLO el objeto JSON.`;
 
       const response = await this.client.messages.create({
-        model: "claude-sonnet-4-20250514",
+        // Parse principal de texto → tier "primary".
+        ...modelParams("primary"),
         max_tokens: 1024,
         messages: [{
           role: "user",
@@ -262,8 +266,11 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
         "{\"fecha\": \"YYYY-MM-DD\"}. Si no hay ninguna referencia " +
         "temporal, responde {\"fecha\": null}. SOLO el JSON.";
 
+      // Helper acotado (fallback de regex, devuelve un valor de lista) →
+      // tier "helper". modelParams omite output_config.effort si el modelo
+      // resuelto no lo soporta (p.ej. Haiku → 400). Ver src/config/models.ts.
       const response = await this.client.messages.create({
-        model: "claude-sonnet-4-20250514",
+        ...modelParams("helper"),
         max_tokens: 128,
         messages: [{ role: "user", content: prompt }],
       });
@@ -298,8 +305,9 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
         "la lista>\"} o {\"categoria\": null} si ninguna corresponde con " +
         "confianza razonable. SOLO el JSON.";
 
+      // Helper acotado → tier "helper".
       const response = await this.client.messages.create({
-        model: "claude-sonnet-4-20250514",
+        ...modelParams("helper"),
         max_tokens: 128,
         messages: [{ role: "user", content: prompt }],
       });
@@ -333,8 +341,9 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
         "lista>\"} o {\"match\": null} si ninguno corresponde con " +
         "confianza. SOLO el JSON.";
 
+      // Helper acotado → tier "helper".
       const response = await this.client.messages.create({
-        model: "claude-sonnet-4-20250514",
+        ...modelParams("helper"),
         max_tokens: 128,
         messages: [{ role: "user", content: prompt }],
       });

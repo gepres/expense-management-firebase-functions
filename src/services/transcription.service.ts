@@ -4,6 +4,7 @@ import * as fs from "fs";
 import * as path from "path";
 import * as os from "os";
 import { audioExtensionFor } from "../utils/media-types";
+import { transcribeModel } from "../config/models";
 
 export class TranscriptionService {
   private client: OpenAI;
@@ -32,7 +33,9 @@ export class TranscriptionService {
       // Transcribe using Whisper
       const transcription = await this.client.audio.transcriptions.create({
         file: fs.createReadStream(tempFilePath),
-        model: "whisper-1",
+        // Modelo por env (default gpt-4o-mini-transcribe). Ver
+        // src/config/models.ts § OpenAI.
+        model: transcribeModel(),
         language: "es", // Spanish
       });
 

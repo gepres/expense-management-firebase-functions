@@ -1,10 +1,10 @@
 # Gastos Firebase Functions
 
-Asistente de gastos por WhatsApp construido sobre **Firebase Functions + Firestore**. Recibe mensajes de texto, imágenes (comprobantes, Yape, Plin) y notas de voz, los interpreta con **Anthropic Claude** (texto + Vision) y **OpenAI Whisper** (audio), y registra los gastos en Firestore.
+Asistente de gastos por WhatsApp construido sobre **Firebase Functions + Firestore**. Recibe mensajes de texto, imágenes (comprobantes, Yape, Plin) y notas de voz, los interpreta con **Anthropic Claude** (texto + Vision) y **OpenAI** (transcripción de audio), y registra los gastos en Firestore.
 
 Cada gasto se vincula a una **cuenta** (wallet con saldo sincronizado vía ledger de movimientos) y cada decisión de clasificación se registra en un **historial de aprendizaje** por usuario que personaliza futuras inferencias.
 
-> Versión: 2.2.0 · Node 20 · TypeScript 5.3 · Firebase Functions v2
+> Versión: 2.3.0 · Node 20 · TypeScript 5.3 · Firebase Functions v2
 
 ---
 
@@ -37,7 +37,7 @@ Usuario (WhatsApp)
         ┌─────────────────────────────────────────────────────┼─────────────────────────────────┐
         │                                                     │                                 │
         ▼                                                     ▼                                 ▼
-  Texto: regex + Anthropic                       Imagen: Anthropic Vision           Audio: Whisper → Anthropic
+  Texto: regex + Anthropic                       Imagen: Anthropic Vision           Audio: OpenAI STT → Anthropic
         │                                                     │                                 │
         └───────────────► Inference (categoría / subcategoría / método pago / moneda / voucher) ◄┘
                                                               │
@@ -57,8 +57,8 @@ Tres canales de entrada (texto / imagen / audio), un único pipeline de inferenc
 | Lenguaje        | TypeScript 5.3 (strict)                        |
 | Persistencia    | Firestore                                      |
 | Mensajería      | Twilio WhatsApp Business API                   |
-| NLU (texto/img) | Anthropic Claude (`claude-sonnet-4-20250514`)  |
-| Transcripción   | OpenAI Whisper (`whisper-1`)                   |
+| NLU (texto/img) | Anthropic Claude — Sonnet 4.6 (vision/parse) + Haiku 4.5 (helpers), por env |
+| Transcripción   | OpenAI (`gpt-4o-mini-transcribe`, por env)     |
 | Lint            | ESLint + Google config                         |
 
 ---
@@ -70,9 +70,10 @@ gastos-firebase-functions/
 ├── src/
 │   ├── index.ts                          # Entrypoint y trigger principal
 │   ├── types/index.ts                    # Interfaces compartidas
+│   ├── config/models.ts                  # Modelos por env (tier Anthropic + OpenAI STT)
 │   ├── services/
 │   │   ├── anthropic.service.ts          # Parseo texto + Vision (imagen)
-│   │   ├── transcription.service.ts      # Whisper (audio → texto)
+│   │   ├── transcription.service.ts      # OpenAI STT (audio → texto)
 │   │   ├── inference.service.ts          # Categoría/subcat/método/moneda/voucher
 │   │   ├── expense.service.ts            # CRUD + summary en Firestore
 │   │   ├── user.service.ts               # Validación por whatsappPhone
@@ -105,6 +106,13 @@ gastos-firebase-functions/
    - `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, `TWILIO_WHATSAPP_NUMBER`
    - `ANTHROPIC_API_KEY`
    - `OPENAI_API_KEY` (necesaria para procesar audios)
+
+   Variables opcionales (modelos por env, no-secretas — resueltas en `src/config/models.ts`; si se omiten se usan los defaults):
+   - `ANTHROPIC_MODEL_PRIMARY` (vision + parse principal, default `claude-sonnet-4-6`)
+   - `ANTHROPIC_MODEL_HELPER` (fallbacks acotados, default `claude-haiku-4-5`)
+   - `OPENAI_MODEL_TRANSCRIBE` (audio, default `gpt-4o-mini-transcribe`)
+
+   > Cambiar un modelo no requiere tocar código pero **sí redeploy** (el `.env` se bundlea en Functions v2). `output_config.effort` se manda solo si el modelo Anthropic lo soporta (Sonnet 4.6+/Opus 4.5+; Haiku da 400) — esa regla la resuelve `models.ts`, no el call-site.
 3. **Configurar Secrets v2 (producción)**
    ```bash
    firebase functions:secrets:set TWILIO_ACCOUNT_SID
@@ -130,7 +138,7 @@ gastos-firebase-functions/
   1. Marca el documento como `processing`.
   2. Normaliza el teléfono y valida al usuario (`users.whatsappPhone`). Si no existe, responde y termina.
   3. Detecta el tipo de contenido:
-     - **Audio** (`audio/ogg`, `mpeg`, `mp4`, `amr`, `wav`) → `TranscriptionService` (Whisper) → `AnthropicService.parseExpenseMessage`.
+     - **Audio** (`audio/ogg`, `mpeg`, `mp4`, `amr`, `wav`) → `TranscriptionService` (OpenAI STT) → `AnthropicService.parseExpenseMessage`.
      - **Imagen** (`image/jpeg`, `png`, `gif`, `webp`) → `AnthropicService.extractReceiptData` (Vision).
      - **Texto** → regex (`MessageParser.parseExpenseFromText`), fallback a Anthropic si falla.
   4. `InferenceService` resuelve `categoría`, `subcategoría`, `metodoPago`, `moneda`, `voucherType` usando las subcolecciones del usuario.

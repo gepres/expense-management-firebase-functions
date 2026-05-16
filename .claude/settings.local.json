@@ -30,7 +30,23 @@
       "Bash(firebase functions:delete *)",
       "Bash(curl -s --max-time 30 https://healthcheck-xo244tcjca-uc.a.run.app)",
       "Bash(git commit -m 'docs:  reconciliar flujo Twilio — twilioWebhook es la ingestión activa en prod' -m 'Twilio apunta a twilioWebhook \\(Firebase, 2ª gen\\) desde 2026-05-15, no al *)",
-      "Bash(git commit -m 'fix:  validar firma Twilio contra TWILIO_WEBHOOK_URL \\(Cloud Run v2 strip-ea el path\\)' -m 'En Functions v2 \\(Cloud Run, alias cloudfunctions.net/twilioWebhook\\) el *)"
+      "Bash(git commit -m 'fix:  validar firma Twilio contra TWILIO_WEBHOOK_URL \\(Cloud Run v2 strip-ea el path\\)' -m 'En Functions v2 \\(Cloud Run, alias cloudfunctions.net/twilioWebhook\\) el *)",
+      "Read(//d/PROYECTOS/gepres/gastos/**)",
+      "Bash(git rm *)",
+      "Bash(git commit -m 'chore:  Opción A — el bot repo deja de gestionar Firestore \\(dueño: proyecto gastos\\)' -m 'Tras el incidente \\(deployar firestore:rules deny-all desde aquí rompió el *)",
+      "Bash(git -C /d/PROYECTOS/gepres/gastos-firebase-functions add firebase.json CLAUDE.md docs/SETUP.md docs/QUICKSTART.md docs/ARCHITECTURE.md docs/FEATURES.md README.md)",
+      "Bash(git -C /d/PROYECTOS/gepres/gastos-firebase-functions status --short)",
+      "Bash(git -C /d/PROYECTOS/gepres/gastos-firebase-functions commit -m 'chore:  Opción A — el bot repo deja de gestionar Firestore \\(dueño: proyecto gastos\\)' -m 'Tras el incidente \\(deployar firestore:rules deny-all desde aquí rompió el login del web app\\): se quita el bloque firestore de firebase.json y se borran firestore.rules / firestore.indexes.json. firebase deploy desde este repo ya no puede tocar Firestore. Los 8 índices del bot se fusionaron en gastos/firestore.indexes.json \\(fuente única, 27 índices, desplegada\\). Docs: CLAUDE §7/§10, SETUP §10-11, QUICKSTART, ARCHITECTURE, FEATURES, README.' -m 'Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>')",
+      "Bash(git -C /d/PROYECTOS/gepres/gastos-firebase-functions log --oneline -2)",
+      "Bash(git -C /d/PROYECTOS/gepres/gastos-firebase-functions add src/scripts/reassign-user.ts package.json)",
+      "Bash(git -C /d/PROYECTOS/gepres/gastos-firebase-functions commit -m 'feat:  script reassign-user para resolver identidad WhatsApp ↔ web app' -m 'Reasigna expenses \\(userId FROM→TO\\), opcional learning_log, y mueve *)",
+      "Bash(git -C /d/PROYECTOS/gepres/gastos-firebase-functions log --oneline -1)",
+      "Bash(git -C /d/PROYECTOS/gepres/gastos-firebase-functions add src/services/account.service.ts src/services/expense.service.ts)",
+      "Bash(git -C /d/PROYECTOS/gepres/gastos-firebase-functions commit -m 'feat:  bot usa la cuenta canónica top-level \\(desacopla saldo propio\\)' -m 'resolveActiveAccount lee la colección canónica '\\\\''accounts'\\\\'' \\(userId + *)",
+      "Skill(claude-api)",
+      "WebSearch",
+      "PowerShell(npm install *)",
+      "PowerShell(npm *)"
     ]
   }
 }
