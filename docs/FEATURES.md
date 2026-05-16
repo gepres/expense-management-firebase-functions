@@ -289,6 +289,8 @@ severity=ERROR
 
 Guard con early-return → costo ~nulo en los updates normales (`pending`/`processing`/`completed`).
 
+La **alert policy** está versionada en [`ops/alert-policy.json`](../ops/alert-policy.json); el deploy de funciones **no** la crea. Aplicarla una vez con el runbook [`ops/README.md`](../ops/README.md) (`gcloud` + canal de notificación). El deep-link de los mensajes al web app se controla con `WEBAPP_URL` en `.env` (apunta a `/cuentas`).
+
 ## CI
 
 `.github/workflows/ci.yml` en cada push/PR a `main`:

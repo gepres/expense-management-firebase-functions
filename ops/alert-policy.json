@@ -1,0 +1,23 @@
+{
+  "displayName": "WhatsApp queue failed",
+  "documentation": {
+    "content": "processWhatsAppQueue agotó los 3 reintentos para un mensaje (whatsapp_queue → status=failed). Emitido por la función onWhatsAppQueueFailed. Revisar logs por queueId/phoneNumber/queueError. Runbook: ops/README.md.",
+    "mimeType": "text/markdown"
+  },
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "whatsapp_queue_failed log",
+      "conditionMatchedLog": {
+        "filter": "resource.type=\"cloud_run_revision\" AND jsonPayload.event=\"whatsapp_queue_failed\" AND severity=ERROR"
+      }
+    }
+  ],
+  "alertStrategy": {
+    "notificationRateLimit": { "period": "300s" },
+    "autoClose": "1800s"
+  },
+  "notificationChannels": [
+    "projects/expense-app-gepres/notificationChannels/NOTIFICATION_CHANNEL_ID"
+  ]
+}
