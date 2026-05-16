@@ -14,6 +14,7 @@
     "seed:sinclasificar": "npm run build && node lib/scripts/seed-emulator.js --enqueue 99 cosa raruna xyz",
     "seed:saldo": "npm run build && node lib/scripts/seed-emulator.js --enqueue saldo",
     "seed:ingreso": "npm run build && node lib/scripts/seed-emulator.js --enqueue ingreso 200 sueldo",
+    "smoke": "npm run build && firebase emulators:exec --only firestore,functions \"node lib/scripts/smoke-emulator.js\"",
     "shell": "npm run build && firebase functions:shell",
     "start": "npm run shell",
     "deploy": "firebase deploy --only functions",
