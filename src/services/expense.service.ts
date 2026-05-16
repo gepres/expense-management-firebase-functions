@@ -298,6 +298,82 @@ export class ExpenseService {
     }
   }
 
+  // Resumen (total + por categoría + count) en un rango [start, end) sobre
+  // `fecha` (fecha efectiva del gasto). Para "cuanto gaste hoy/semana/mes".
+  async getSummaryBetween(
+    userId: string,
+    start: Date,
+    end: Date
+  ): Promise<{
+    total: number;
+    byCategory: Record<string, number>;
+    count: number;
+  }> {
+    try {
+      const snapshot = await this.db
+        .collection("expenses")
+        .where("userId", "==", userId)
+        .where("fecha", ">=", Timestamp.fromDate(start))
+        .where("fecha", "<", Timestamp.fromDate(end))
+        .get();
+
+      let total = 0;
+      const byCategory: Record<string, number> = {};
+      snapshot.forEach((doc) => {
+        const d = doc.data();
+        const monto = Number(d.monto) || 0;
+        total += monto;
+        byCategory[d.categoria] = (byCategory[d.categoria] || 0) + monto;
+      });
+      return { total, byCategory, count: snapshot.size };
+    } catch (error) {
+      logger.error("Error summarizing expenses by range:", error);
+      return { total: 0, byCategory: {}, count: 0 };
+    }
+  }
+
+  // Gastos individuales en un rango [start, end), recientes primero.
+  // Para "gastos de hoy" / "que gaste esta semana".
+  async getExpensesBetween(
+    userId: string,
+    start: Date,
+    end: Date,
+    limit: number = 15
+  ): Promise<
+    Array<{
+      monto: number;
+      moneda: string;
+      categoria: string;
+      descripcion: string;
+      fecha: Date;
+    }>
+  > {
+    try {
+      const snapshot = await this.db
+        .collection("expenses")
+        .where("userId", "==", userId)
+        .where("fecha", ">=", Timestamp.fromDate(start))
+        .where("fecha", "<", Timestamp.fromDate(end))
+        .orderBy("fecha", "desc")
+        .limit(limit)
+        .get();
+      return snapshot.docs.map((doc) => {
+        const d = doc.data();
+        const f: FirebaseFirestore.Timestamp | undefined = d.fecha;
+        return {
+          monto: Number(d.monto) || 0,
+          moneda: d.moneda,
+          categoria: d.categoria,
+          descripcion: d.descripcion,
+          fecha: f ? f.toDate() : new Date(0),
+        };
+      });
+    } catch (error) {
+      logger.error("Error fetching expenses by range:", error);
+      return [];
+    }
+  }
+
   // Filas planas para export CSV (§ A.4). Filtro opcional por mes
   // ("YYYY-MM"). fecha en ISO. Límite alto para no truncar el export.
   async getForExport(

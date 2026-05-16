@@ -8,6 +8,7 @@
 
 export type HelpTopicKey =
   | "gastos"
+  | "consultas"
   | "cuentas"
   | "saldo"
   | "pendientes"
@@ -54,6 +55,28 @@ export const HELP_TOPICS: Record<HelpTopicKey, HelpTopic> = {
       "Detecto solo: categoría, método de pago, moneda y " +
       "fecha. Si algo queda dudoso lo marco y te aviso " +
       "(escribe *ayuda pendientes*).",
+  },
+  consultas: {
+    menuLabel: "📊 Consultar",
+    menuHint: "cuánto gastaste y en qué",
+    aliases: [
+      "consulta", "consultas", "cuanto", "cuanto gaste",
+      "reportes", "reporte", "resumen",
+    ],
+    body:
+      "📊 *Consultar tus gastos*\n\n" +
+      "Pregúntame en lenguaje natural:\n\n" +
+      "• \"cuánto gasté hoy\"\n" +
+      "• \"cuánto llevo este mes\"\n" +
+      "• \"cuánto gasté en comida\"\n" +
+      "• \"cuánto gasté en taxi esta semana\"\n" +
+      "• \"resumen mayo\" / \"resumen mes pasado\"\n" +
+      "• \"gastos de hoy\" — la lista del día\n\n" +
+      "Periodos: *hoy*, *ayer*, *esta semana*, *este mes*, " +
+      "*mes pasado*, o un mes (*mayo*).\n\n" +
+      "Y para saber qué tienes configurado:\n" +
+      "• *mis categorías* · *mis cuentas* · *mis métodos " +
+      "de pago*",
   },
   cuentas: {
     menuLabel: "💳 Cuentas",
@@ -121,7 +144,8 @@ export const HELP_TOPICS: Record<HelpTopicKey, HelpTopic> = {
       "contigo.\n\n" +
       "• *historial* — tus decisiones recientes que estoy " +
       "usando\n" +
-      "• *olvidar historial* — borrar todo lo aprendido\n\n" +
+      "• *olvidar historial* — borrarlo todo (te pido " +
+      "confirmar antes)\n\n" +
       "Tus correcciones (con *clasificar*) pesan más que mis " +
       "adivinanzas.",
   },

@@ -169,6 +169,7 @@ Append-only por usuario. Cada decisión de clasificación se registra; el comand
 
 - Lookup en `users` por `whatsappPhone` (normalizado a `+51XXXXXXXXX`).
 - Si no existe, la función responde con un mensaje pidiendo vincular el número desde la app y termina con `status: "completed"` (sin retry).
+- **Usuario sin cuenta canónica:** `resolveActiveAccount` lanza `NoCanonicalAccountError` (el bot no crea cuentas, dueño: web app). `processWhatsAppQueue` lo captura y envía un mensaje guiado ("crea tu cuenta en la app, sección Cuentas" + `WEBAPP_URL` si está seteada) cerrando con `status: "completed"` — **no** reintenta 3× ni cae al genérico de fallo.
 - El `phoneNumber` que llega del webhook **no** se guarda en el expense — se guarda `userId`.
 
 ---
@@ -223,6 +224,21 @@ Sistema de ayuda en dos niveles (fuente única `src/config/help.ts`, escalable: 
 
 Cada mensaje cabe en un solo WhatsApp (~1600 chars, verificado por tests).
 
+### Consultas (el bot responde, no solo registra)
+`MessageParser.parseQueryCommand` (corre antes de `isCommandMessage` y del parseo de gasto) → `handleQueryCommand`. Solo-lectura.
+
+| Frase del usuario | Acción |
+|-------------------|--------|
+| `cuánto gasté hoy` / `cuánto llevo este mes` | Total + top 5 categorías del periodo |
+| `cuánto gasté en comida [periodo]` | Total de esa categoría en el periodo (mapea nombre→id vía `categoryIdForTerm`) |
+| `resumen mayo` / `resumen mes pasado` | Igual que arriba con periodo explícito (`resumen` pelado = histórico legacy) |
+| `gastos de hoy` / `qué gasté esta semana` | Lista de gastos individuales del periodo (máx 15) |
+| `mis categorías` | Categorías + subcategorías del usuario |
+| `mis cuentas` | Cuentas canónicas (marca *principal* / *activa*) |
+| `mis métodos de pago` | Defaults + métodos propios |
+
+Periodos (`MessageParser.resolveQueryPeriod`, lógica pura testeada): `hoy`, `ayer`, `esta semana` (lun–lun), `este mes`, `mes pasado`, nombre de mes (`mayo` → ese mes; si es futuro, año anterior). Sin periodo reconocible → mes en curso. Backed by `ExpenseService.getSummaryBetween` / `getExpensesBetween` (query por `fecha` en rango `[start, end)`).
+
 ### Cuentas y wallet
 | Comando | Acción |
 |---------|--------|
@@ -240,7 +256,8 @@ Cada mensaje cabe en un solo WhatsApp (~1600 chars, verificado por tests).
 | `pendientes` | Lista gastos `sin_clasificar` o por revisar |
 | `clasificar <id> <cat> [subcat]` | Reclasifica un gasto y lo aprende |
 | `mi historial` / `aprendizajes` | Decisiones recientes |
-| `olvidar historial` | Soft delete del historial de aprendizaje |
+| `olvidar historial` | Pide confirmación (acción destructiva) |
+| `olvidar historial confirmar` | Ejecuta el soft delete del historial |
 
 ---
 

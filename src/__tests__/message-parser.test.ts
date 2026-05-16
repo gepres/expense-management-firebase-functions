@@ -93,9 +93,14 @@ test("parseBotCommand", () => {
   assert.deepEqual(MessageParser.parseBotCommand("pendientes"), {
     kind: "pendientes",
   });
+  // "olvidar historial" pide confirmación; solo la frase explícita borra.
   assert.deepEqual(MessageParser.parseBotCommand("olvidar historial"), {
-    kind: "olvidar_historial",
+    kind: "olvidar_historial_prompt",
   });
+  assert.deepEqual(
+    MessageParser.parseBotCommand("olvidar historial confirmar"),
+    { kind: "olvidar_historial" }
+  );
   assert.deepEqual(MessageParser.parseBotCommand("mi historial"), {
     kind: "historial",
   });
@@ -115,6 +120,68 @@ test("parseHelpCommand", () => {
   });
   assert.equal(MessageParser.parseHelpCommand("50 almuerzo"), null);
   assert.equal(MessageParser.parseHelpCommand("ayudame con esto"), null);
+});
+
+test("parseQueryCommand: spent / list / discovery", () => {
+  assert.deepEqual(MessageParser.parseQueryCommand("cuanto gaste hoy"), {
+    kind: "spent",
+    periodRaw: "hoy",
+    categoria: undefined,
+  });
+  assert.deepEqual(
+    MessageParser.parseQueryCommand("cuánto gasté en comida"),
+    { kind: "spent", periodRaw: "", categoria: "comida" }
+  );
+  assert.deepEqual(
+    MessageParser.parseQueryCommand("cuanto gaste en taxi esta semana"),
+    { kind: "spent", periodRaw: "esta semana", categoria: "taxi" }
+  );
+  assert.deepEqual(MessageParser.parseQueryCommand("resumen mayo"), {
+    kind: "spent",
+    periodRaw: "mayo",
+    categoria: undefined,
+  });
+  // "resumen" pelado → null (lo maneja el resumen histórico legacy).
+  assert.equal(MessageParser.parseQueryCommand("resumen"), null);
+  assert.deepEqual(MessageParser.parseQueryCommand("gastos de hoy"), {
+    kind: "list",
+    periodRaw: "hoy",
+  });
+  assert.deepEqual(MessageParser.parseQueryCommand("mis categorias"), {
+    kind: "categories",
+  });
+  assert.deepEqual(
+    MessageParser.parseQueryCommand("que cuentas tengo"),
+    { kind: "accounts" }
+  );
+  assert.deepEqual(
+    MessageParser.parseQueryCommand("mis métodos de pago"),
+    { kind: "payments" }
+  );
+  // Un gasto normal no es una consulta.
+  assert.equal(MessageParser.parseQueryCommand("50 almuerzo"), null);
+  assert.equal(MessageParser.parseQueryCommand("hola"), null);
+});
+
+test("resolveQueryPeriod: rangos y etiquetas", () => {
+  const hoy = MessageParser.resolveQueryPeriod("hoy");
+  assert.equal(hoy.label, "hoy");
+  assert.equal(hoy.start.getHours(), 0);
+  assert.equal(
+    hoy.end.getTime() - hoy.start.getTime(),
+    24 * 60 * 60 * 1000
+  );
+
+  const vacio = MessageParser.resolveQueryPeriod("");
+  assert.ok(vacio.label.includes("este mes"));
+  assert.equal(vacio.start.getDate(), 1);
+  assert.ok(vacio.end > vacio.start);
+
+  const pasado = MessageParser.resolveQueryPeriod("mes pasado");
+  const now = new Date();
+  const expected = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  assert.equal(pasado.start.getMonth(), expected.getMonth());
+  assert.equal(pasado.start.getDate(), 1);
 });
 
 test("hasTemporalHint", () => {

@@ -4,7 +4,7 @@ Asistente de gastos por WhatsApp construido sobre **Firebase Functions + Firesto
 
 Cada gasto se vincula a una **cuenta** (wallet con saldo sincronizado vía ledger de movimientos) y cada decisión de clasificación se registra en un **historial de aprendizaje** por usuario que personaliza futuras inferencias.
 
-> Versión: 2.3.0 · Node 20 · TypeScript 5.3 · Firebase Functions v2
+> Versión: 2.4.0 · Node 20 · TypeScript 5.3 · Firebase Functions v2
 
 ---
 
@@ -70,16 +70,20 @@ gastos-firebase-functions/
 ├── src/
 │   ├── index.ts                          # Entrypoint y trigger principal
 │   ├── types/index.ts                    # Interfaces compartidas
-│   ├── config/models.ts                  # Modelos por env (tier Anthropic + OpenAI STT)
+│   ├── config/
+│   │   ├── models.ts                     # Modelos por env (tier Anthropic + OpenAI STT)
+│   │   └── help.ts                       # Fuente única de ayuda/onboarding (menú + temas)
 │   ├── services/
 │   │   ├── anthropic.service.ts          # Parseo texto + Vision (imagen)
 │   │   ├── transcription.service.ts      # OpenAI STT (audio → texto)
 │   │   ├── inference.service.ts          # Categoría/subcat/método/moneda/voucher
-│   │   ├── expense.service.ts            # CRUD + summary en Firestore
+│   │   ├── expense.service.ts            # CRUD + summary/consultas por rango
+│   │   ├── account.service.ts            # Cuenta activa + cuentas canónicas
+│   │   ├── onboarding.service.ts         # Primer contacto (idempotente)
 │   │   ├── user.service.ts               # Validación por whatsappPhone
 │   │   └── twilio.service.ts             # Envío de mensajes WhatsApp
 │   └── utils/
-│       ├── message-parser.ts             # Normalización, regex, comandos
+│       ├── message-parser.ts             # Normalización, regex, comandos, consultas
 │       └── media-downloader.ts           # Descarga autenticada de Twilio media
 ├── docs/                                 # Documentación extendida (ver más abajo)
 ├── firebase.json                         # solo functions + emuladores (sin firestore)
@@ -137,6 +141,8 @@ gastos-firebase-functions/
 - **Flujo:**
   1. Marca el documento como `processing`.
   2. Normaliza el teléfono y valida al usuario (`users.whatsappPhone`). Si no existe, responde y termina.
+  2b. **Onboarding automático:** en el primer contacto tras vincular WhatsApp envía la bienvenida (idempotente vía `OnboardingService`; no se repite en reintentos ni a usuarios con historial previo).
+  2c. **Sin cuenta canónica:** si el usuario no tiene cuenta, responde con un mensaje guiado (crear cuenta en la app) y termina `completed` — no reintenta.
   3. Detecta el tipo de contenido:
      - **Audio** (`audio/ogg`, `mpeg`, `mp4`, `amr`, `wav`) → `TranscriptionService` (OpenAI STT) → `AnthropicService.parseExpenseMessage`.
      - **Imagen** (`image/jpeg`, `png`, `gif`, `webp`) → `AnthropicService.extractReceiptData` (Vision).
@@ -308,12 +314,33 @@ Gasté 100 en supermercado
 ### Registrar gastos por audio
 - Nota de voz en español: *"Gasté veinticinco soles en almuerzo"*
 
+### Onboarding
+La primera vez que escribes tras vincular WhatsApp, el bot envía solo una **bienvenida** con lo que puede hacer. `inicio` / `hola` la repiten cuando quieras.
+
+### Ayuda (menú + temas)
+| Forma | Acción |
+|-------|--------|
+| `ayuda` | Menú compacto con todas las áreas (alias `comandos`, `menu`) |
+| `ayuda <tema>` | Detalle con ejemplos: `gastos`, `consultas`, `cuentas`, `saldo`, `pendientes`, `historial` (con aliases, p. ej. `ayuda foto`, `ayuda dinero`) |
+
+Fuente única en `src/config/help.ts`: agregar un flujo nuevo = editar `HELP_TOPICS` y aparece solo en el menú.
+
+### Consultas (el bot responde, no solo registra)
+| Frase | Acción |
+|-------|--------|
+| `cuánto gasté hoy` / `cuánto llevo este mes` | Total + top categorías del periodo |
+| `cuánto gasté en comida [periodo]` | Total de esa categoría en el periodo |
+| `resumen mayo` / `resumen mes pasado` | Resumen con periodo explícito |
+| `gastos de hoy` / `qué gasté esta semana` | Lista de gastos del periodo |
+| `mis categorías` / `mis cuentas` / `mis métodos de pago` | Qué tienes configurado |
+
+Periodos: `hoy`, `ayer`, `esta semana`, `este mes`, `mes pasado`, nombre de mes.
+
 ### Comandos
 | Comando | Alias / forma                               | Acción                         |
 |---------|---------------------------------------------|--------------------------------|
-| `inicio`| `hola`, `hi`, `start`                       | Mensaje de bienvenida          |
-| `resumen`| `summary`, `total`, `ver gastos`           | Total + breakdown por categoría|
-| `ayuda` | `help`, `comandos`, `commands`              | Lista de comandos              |
+| `inicio`| `hola`, `hi`, `start`                       | Bienvenida / onboarding        |
+| `resumen`| `summary`, `total`, `ver gastos`           | Total histórico por categoría  |
 | `saldo` | `mi saldo`                                  | Saldo de la cuenta activa      |
 | `saldos`| `saldo de cuentas`                          | Saldo de todas las cuentas     |
 | `movimientos` | —                                     | Últimos movimientos            |
@@ -322,7 +349,8 @@ Gasté 100 en supermercado
 | `usar cuenta <nombre>` | `cuenta actual`, `cuenta principal` | Cambia/consulta la cuenta activa |
 | `pendientes` | `clasificar`                          | Gastos sin clasificar / a revisar |
 | `clasificar <id> <cat> [subcat]` | —                  | Reclasifica un gasto (alimenta el aprendizaje) |
-| `mi historial` | `aprendizajes`, `olvidar historial` | Historial de aprendizaje       |
+| `mi historial` | `aprendizajes`                      | Historial de aprendizaje       |
+| `olvidar historial` | + `olvidar historial confirmar` | Borra el aprendizaje (pide confirmación) |
 
 Ejemplos detallados de I/O en [`docs/EXAMPLES.md`](docs/EXAMPLES.md).
 

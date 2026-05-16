@@ -1,4 +1,20 @@
-import { TwilioWebhookBody, BotCommand } from "../types";
+import {
+  TwilioWebhookBody,
+  BotCommand,
+  QueryCommand,
+  ResolvedPeriod,
+} from "../types";
+
+// Meses ES (incl. variante "setiembre"). Índice 0 = enero.
+const MONTHS: Record<string, number> = {
+  enero: 0, febrero: 1, marzo: 2, abril: 3, mayo: 4, junio: 5,
+  julio: 6, agosto: 7, septiembre: 8, setiembre: 8, octubre: 9,
+  noviembre: 10, diciembre: 11,
+};
+const MONTH_LABELS = [
+  "enero", "febrero", "marzo", "abril", "mayo", "junio",
+  "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre",
+];
 
 export class MessageParser {
   static normalizePhoneNumber(phone: string): string {
@@ -183,7 +199,16 @@ export class MessageParser {
     if (m === "movimientos" || m === "mis movimientos") {
       return { kind: "movimientos" };
     }
-    if (m === "olvidar historial") return { kind: "olvidar_historial" };
+    if (
+      m === "olvidar historial confirmar" ||
+      m === "olvidar historial si" ||
+      m === "si olvidar historial"
+    ) {
+      return { kind: "olvidar_historial" };
+    }
+    if (m === "olvidar historial") {
+      return { kind: "olvidar_historial_prompt" };
+    }
     if (m === "historial" || m === "mi historial" || m === "aprendizajes") {
       return { kind: "historial" };
     }
@@ -224,6 +249,142 @@ export class MessageParser {
 
     if (m === "pendientes" || m === "clasificar") {
       return { kind: "pendientes" };
+    }
+
+    return null;
+  }
+
+  // Resuelve un token de periodo a un rango [start, end) + etiqueta legible.
+  // Tokens: "hoy", "ayer", "semana"/"esta semana", "mes"/"este mes",
+  // "mes pasado"/"mes anterior", o un nombre de mes ("mayo"). Vacío o no
+  // reconocido → mes en curso. Semana = lunes..lunes (Perú).
+  static resolveQueryPeriod(periodRaw: string): ResolvedPeriod {
+    const p = MessageParser.normalizeForMatching(periodRaw);
+    const now = new Date();
+    const y = now.getFullYear();
+    const startOfDay = (d: Date): Date => {
+      const x = new Date(d);
+      x.setHours(0, 0, 0, 0);
+      return x;
+    };
+    const monthRange = (year: number, month: number): ResolvedPeriod => ({
+      start: new Date(year, month, 1),
+      end: new Date(year, month + 1, 1),
+      label:
+        month === now.getMonth() && year === y ?
+          `${MONTH_LABELS[month]} (este mes)` :
+          `${MONTH_LABELS[month]} ${year}`,
+    });
+
+    if (p === "hoy") {
+      const s = startOfDay(now);
+      const e = new Date(s);
+      e.setDate(e.getDate() + 1);
+      return { start: s, end: e, label: "hoy" };
+    }
+    if (p === "ayer") {
+      const e = startOfDay(now);
+      const s = new Date(e);
+      s.setDate(s.getDate() - 1);
+      return { start: s, end: e, label: "ayer" };
+    }
+    if (p === "semana" || p === "esta semana") {
+      const s = startOfDay(now);
+      // Lunes como inicio de semana (getDay: 0=domingo).
+      const diff = (s.getDay() + 6) % 7;
+      s.setDate(s.getDate() - diff);
+      const e = new Date(s);
+      e.setDate(e.getDate() + 7);
+      return { start: s, end: e, label: "esta semana" };
+    }
+    if (
+      p === "mes pasado" ||
+      p === "el mes pasado" ||
+      p === "mes anterior"
+    ) {
+      const d = new Date(y, now.getMonth() - 1, 1);
+      return monthRange(d.getFullYear(), d.getMonth());
+    }
+    for (const [name, idx] of Object.entries(MONTHS)) {
+      if (p === name || p === `de ${name}`) {
+        // Mes futuro en este año → se asume el del año pasado.
+        const year = idx > now.getMonth() ? y - 1 : y;
+        return monthRange(year, idx);
+      }
+    }
+    // "mes" / "este mes" / vacío / desconocido → mes en curso.
+    return monthRange(y, now.getMonth());
+  }
+
+  // Frases de periodo, ORDENADAS (más específico primero) para recortar el
+  // sufijo correcto de una consulta (ej. "el mes pasado" antes que "mes").
+  private static periodPhrases(): string[] {
+    return [
+      "el mes pasado", "mes pasado", "mes anterior", "este mes",
+      "esta semana", "hoy", "ayer", "semana", "mes",
+      ...Object.keys(MONTHS).map((n) => `de ${n}`),
+      ...Object.keys(MONTHS),
+    ];
+  }
+
+  // Separa una cola "<...> <periodo>" en [resto, periodoRaw]. Si no hay
+  // periodo reconocible, periodoRaw queda "" (→ mes en curso por defecto).
+  private static splitTrailingPeriod(text: string): [string, string] {
+    for (const ph of MessageParser.periodPhrases()) {
+      if (text === ph || text.endsWith(` ${ph}`)) {
+        return [text.slice(0, text.length - ph.length).trim(), ph];
+      }
+    }
+    return [text, ""];
+  }
+
+  // Consultas de solo-lectura. El bot debe "responder", no solo registrar.
+  // Soporta:
+  //  - "cuanto gaste [en <cat>] [<periodo>]" / "cuanto llevo <periodo>"
+  //  - "resumen <periodo>" (sin periodo → null: lo maneja el resumen legacy)
+  //  - "gastos de <periodo>" / "que gaste <periodo>"
+  //  - "mis categorias" / "mis cuentas" / "mis metodos de pago"
+  static parseQueryCommand(message: string): QueryCommand | null {
+    const m = MessageParser.normalizeForMatching(
+      message.trim().replace(/^\//, "")
+    );
+
+    if (
+      /^(que |cuales |mis )?(categorias|categoria)( tengo)?$/.test(m)
+    ) {
+      return { kind: "categories" };
+    }
+    if (/^(que |cuales |mis )?cuentas( tengo)?$/.test(m)) {
+      return { kind: "accounts" };
+    }
+    if (
+      /^(que |cuales |mis )?(metodos? de pago|metodos)( tengo)?$/.test(m)
+    ) {
+      return { kind: "payments" };
+    }
+
+    // Listado de gastos de un periodo (sin monto → no es un gasto nuevo).
+    const list = m.match(
+      /^(?:gastos|mis gastos|que gaste|que he gastado)\b\s*(?:de |en )?(.*)$/
+    );
+    if (list && !/\d/.test(m)) {
+      return { kind: "list", periodRaw: list[1].trim() };
+    }
+
+    // Monto gastado (+ categoría y/o periodo opcionales).
+    const spent = m.match(
+      /^(cuanto (?:gaste|he gastado|llevo|va|tengo gastado)|resumen)\b(.*)$/
+    );
+    if (spent) {
+      const verb = spent[1];
+      const [afterPeriod, periodRaw] = MessageParser.splitTrailingPeriod(
+        spent[2].trim()
+      );
+      const enCat = afterPeriod.match(/^en (.+)$/);
+      const categoria = enCat ? enCat[1].trim() : undefined;
+      // "resumen" pelado = resumen histórico legacy (lo maneja otro flujo).
+      if (verb === "resumen" && !periodRaw && !categoria) return null;
+      return { kind: "spent", periodRaw, categoria };
     }
 
     return null;

@@ -92,6 +92,8 @@ Resolución: `defineSecret` en `index.ts` → bindeado a la función → `proces
 
 **Var no-secreta requerida en prod:** `TWILIO_WEBHOOK_URL` (en `.env`, bundled al deploy) = la URL **exacta** configurada en Twilio. Sin ella, en Cloud Run v2 la validación de firma falla siempre (el path se strip-ea, `req.url="/"`; ver §7 y `docs/SETUP.md` §9.1).
 
+**Var no-secreta opcional:** `WEBAPP_URL` (en `.env`) — si está, se incluye en el mensaje guiado cuando el usuario no tiene cuenta canónica (dead-end de `resolveActiveAccount`). Si falta, el mensaje solo dice "créala en la app (sección Cuentas)" sin link.
+
 **Modelos Anthropic por tier (no-secreto, opcional):** `ANTHROPIC_MODEL_PRIMARY` (vision + parse principal, default `claude-sonnet-4-6`) y `ANTHROPIC_MODEL_HELPER` (fallbacks acotados, default `claude-haiku-4-5`). Resueltos en `src/config/models.ts` vía `modelParams(tier)` — **único lugar** que decide modelo + `thinking`/`output_config`. Invariante: `output_config.effort` solo se manda si el modelo lo soporta (Sonnet 4.6+/Opus 4.5+); Haiku 4.5 y Sonnet ≤4.5 devuelven **400** con `effort`. Default conservador: modelo no reconocido → sin `effort`. Migrado desde `claude-sonnet-4-20250514` (deprecado, se retira 2026-06-15). Audio: `OPENAI_MODEL_TRANSCRIBE` (default `gpt-4o-mini-transcribe`, resuelto en `transcribeModel()` del mismo `models.ts`; OpenAI, no Claude — Whisper legacy reemplazado). Las 3 vars `*_MODEL_*` son no-secretas (`.env`, bundled); cambiar modelo no toca código pero sí requiere redeploy.
 
 ## 7. Trampas conocidas
@@ -105,6 +107,8 @@ Resolución: `defineSecret` en `index.ts` → bindeado a la función → `proces
 - **`getExpenseSummary` por mes:** ya arreglado (usa `Timestamp.fromDate` con cotas `[mes, mes+1)`).
 - **`isValidAudioType` centralizado** en `src/utils/media-types.ts`. Añadir formatos en **un solo** lugar.
 - **Mensaje sin texto y sin media:** se marca `completed` con `error: "No content to process"`. No responde al usuario; decisión consciente para no spamear.
+- **Usuario sin cuenta canónica:** `resolveActiveAccount` lanza `NoCanonicalAccountError` (clase exportada de `account.service.ts`). `processWhatsAppQueue` la captura **específicamente** → mensaje guiado + `completed` (sin retry). Cualquier otro error de resolución se re-lanza al catch externo (retry normal). No volver a un `throw new Error` genérico ahí.
+- **Consultas vs gasto:** `parseQueryCommand` corre **antes** del parseo de gasto y de `isCommandMessage`. `resumen` pelado devuelve `null` a propósito (lo maneja el `resumen` histórico legacy en `handleCommand`); `resumen <periodo>` sí es consulta. Las cuentas en `mis cuentas` salen de `listCanonical` (colección canónica top-level), no de `listByUser` (modelo legacy `users/{uid}/accounts`).
 - **`needsReview` de método de pago:** desviación deliberada del ROADMAP literal — solo se marca cuando hay un método explícito (texto/imagen) que no resuelve, no cuando simplemente no se menciona método (un "50 almuerzo" cae a `efectivo` sin review).
 
 ## 8. Estilo de cambios

@@ -11,14 +11,21 @@ import {
   Account,
   LearningSource,
   BotCommand,
+  QueryCommand,
 } from "./types";
 import { AnthropicService } from "./services/anthropic.service";
 import { TwilioService } from "./services/twilio.service";
 import { ExpenseService } from "./services/expense.service";
 import { UserService } from "./services/user.service";
-import { AccountService } from "./services/account.service";
+import {
+  AccountService,
+  NoCanonicalAccountError,
+} from "./services/account.service";
 import { MovementService } from "./services/movement.service";
-import { InferenceService } from "./services/inference.service";
+import {
+  InferenceService,
+  categoryIdForTerm,
+} from "./services/inference.service";
 import { LearningLogService } from "./services/learning-log.service";
 import { OnboardingService } from "./services/onboarding.service";
 import { TranscriptionService } from "./services/transcription.service";
@@ -133,9 +140,33 @@ export const processWhatsAppQueue = onDocumentCreated(
         }
       }
 
-      // Resolve active account (session override → primary → first → lazy create)
+      // Resolve active account (session override → primary → first).
+      // Sin cuenta canónica el bot no puede registrar: en vez de
+      // reintentar 3× y fallar con un genérico, guiamos al usuario.
       const accountService = new AccountService();
-      const account = await accountService.resolveActiveAccount(user.id);
+      let account: Account;
+      try {
+        account = await accountService.resolveActiveAccount(user.id);
+      } catch (accErr) {
+        if (accErr instanceof NoCanonicalAccountError) {
+          const webapp = process.env.WEBAPP_URL;
+          const twilioService = new TwilioService();
+          await twilioService.sendMessage(
+            phoneNumber,
+            "👋 Casi listo. Aún no tienes una *cuenta* creada, " +
+            "así que todavía no puedo registrar tus gastos.\n\n" +
+            "Crea tu cuenta desde la app (sección *Cuentas*)" +
+            (webapp ? `:\n${webapp}` : ".") +
+            "\n\nLuego reenvíame tu mensaje y lo registro. 💸"
+          );
+          await snap.ref.update({
+            status: "completed",
+            error: "no canonical account",
+          });
+          return;
+        }
+        throw accErr;
+      }
       logger.info(
         `💳 Active account: ${account.id} (${account.nombre}, ${account.moneda})`
       );
@@ -458,6 +489,14 @@ async function processTextMessage(
         phoneNumber,
         topic ? buildHelpTopic(topic) : buildHelpMenu()
       );
+      await snap.ref.update({ status: "completed" });
+      return;
+    }
+
+    // Consultas de solo-lectura ("cuanto gaste hoy", "mis categorias"…).
+    const queryCmd = MessageParser.parseQueryCommand(message);
+    if (queryCmd) {
+      await handleQueryCommand(user, account, phoneNumber, queryCmd);
       await snap.ref.update({ status: "completed" });
       return;
     }
@@ -835,6 +874,191 @@ async function registerExpenseFromParsed(
 }
 
 /**
+ * Handle read-only queries: the bot should answer, not only record.
+ * @param {UserData} user - User data
+ * @param {Account} account - Active account (display currency)
+ * @param {string} phoneNumber - User's phone number
+ * @param {QueryCommand} cmd - Parsed query command
+ * @return {Promise<void>} resolves when done
+ */
+async function handleQueryCommand(
+  user: UserData,
+  account: Account,
+  phoneNumber: string,
+  cmd: QueryCommand
+): Promise<void> {
+  const twilioService = new TwilioService();
+  const expenseService = new ExpenseService();
+  const inferenceService = new InferenceService();
+  const accountService = new AccountService();
+
+  try {
+    if (cmd.kind === "categories") {
+      const cats = await inferenceService.getCategories(user.id);
+      if (cats.length === 0) {
+        await twilioService.sendMessage(
+          phoneNumber,
+          "Aún no tienes categorías. Créalas en la app; mientras " +
+          "tanto registro tus gastos como *sin_clasificar* y los " +
+          "puedes ordenar luego (escribe *pendientes*)."
+        );
+        return;
+      }
+      const lines = cats
+        .map((c) => {
+          const subs = (c.subcategorias || [])
+            .map((s) => s.nombre)
+            .filter(Boolean);
+          return (
+            `• *${c.nombre}*` +
+            (subs.length ? `\n   ${subs.join(", ")}` : "")
+          );
+        })
+        .join("\n");
+      await twilioService.sendMessage(
+        phoneNumber,
+        `🏷️ *Tus categorías*\n\n${lines}`
+      );
+      return;
+    }
+
+    if (cmd.kind === "accounts") {
+      const accts = await accountService.listCanonical(user.id);
+      if (accts.length === 0) {
+        await twilioService.sendMessage(
+          phoneNumber,
+          "No encontré cuentas. Créalas en la app (sección Cuentas)."
+        );
+        return;
+      }
+      const lines = accts
+        .map((a) => {
+          const tags = [
+            a.isPrimary ? "principal" : null,
+            a.id === account.id ? "activa" : null,
+          ]
+            .filter(Boolean)
+            .join(", ");
+          return `• *${a.nombre}* (${a.moneda})${tags ? ` — ${tags}` : ""}`;
+        })
+        .join("\n");
+      await twilioService.sendMessage(
+        phoneNumber,
+        `💳 *Tus cuentas*\n\n${lines}\n\n` +
+        "Cambia con: *usar cuenta <nombre>*"
+      );
+      return;
+    }
+
+    if (cmd.kind === "payments") {
+      const methods = await inferenceService.getPaymentMethods(user.id);
+      const defaults = [
+        "efectivo", "yape", "plin", "transferencia", "tarjeta",
+      ];
+      const propios = methods.map((p) => p.nombre).filter(Boolean);
+      let msg =
+        "💳 *Métodos de pago*\n\nSiempre disponibles:\n" +
+        defaults.map((d) => `• ${d}`).join("\n");
+      if (propios.length) {
+        msg += "\n\nTuyos:\n" + propios.map((p) => `• ${p}`).join("\n");
+      }
+      msg += "\n\nMenciónalo en el gasto: \"50 almuerzo con yape\".";
+      await twilioService.sendMessage(phoneNumber, msg);
+      return;
+    }
+
+    // spent / list: resolver periodo a un rango.
+    const period = MessageParser.resolveQueryPeriod(cmd.periodRaw);
+
+    if (cmd.kind === "list") {
+      const items = await expenseService.getExpensesBetween(
+        user.id,
+        period.start,
+        period.end,
+        15
+      );
+      if (items.length === 0) {
+        await twilioService.sendMessage(
+          phoneNumber,
+          `📭 No registraste gastos ${period.label}.`
+        );
+        return;
+      }
+      const lines = items
+        .map(
+          (it) =>
+            `• ${it.moneda} ${it.monto.toFixed(2)} — ${it.descripcion}`
+        )
+        .join("\n");
+      const total = items
+        .reduce((acc, it) => acc + it.monto, 0)
+        .toFixed(2);
+      await twilioService.sendMessage(
+        phoneNumber,
+        `🧾 *Gastos ${period.label}* (${items.length})\n\n${lines}\n\n` +
+        `Σ ${account.moneda} ${total}`
+      );
+      return;
+    }
+
+    // cmd.kind === "spent"
+    const summary = await expenseService.getSummaryBetween(
+      user.id,
+      period.start,
+      period.end
+    );
+
+    if (cmd.categoria) {
+      const cats = await inferenceService.getCategories(user.id);
+      const catId = categoryIdForTerm(cmd.categoria, cats);
+      const key = catId ?? cmd.categoria;
+      const monto = summary.byCategory[key] ?? 0;
+      const nombre =
+        cats.find((c) => c.id === catId)?.nombre ?? cmd.categoria;
+      await twilioService.sendMessage(
+        phoneNumber,
+        `🏷️ *${nombre}* — ${period.label}\n` +
+        `💰 ${account.moneda} ${monto.toFixed(2)}` +
+        (monto === 0 ?
+          "\n\n(0 gastos en esa categoría/periodo)" :
+          "")
+      );
+      return;
+    }
+
+    if (summary.count === 0) {
+      await twilioService.sendMessage(
+        phoneNumber,
+        `📭 No registraste gastos ${period.label}.`
+      );
+      return;
+    }
+    const cats = await inferenceService.getCategories(user.id);
+    const nameOf = (id: string): string =>
+      id === "sin_clasificar" ?
+        "sin clasificar" :
+        cats.find((c) => c.id === id)?.nombre ?? id;
+    const top = Object.entries(summary.byCategory)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([id, amt]) => `  • ${nameOf(id)}: ${amt.toFixed(2)}`)
+      .join("\n");
+    await twilioService.sendMessage(
+      phoneNumber,
+      `📊 *${period.label}*\n\n` +
+      `💰 Total: ${account.moneda} ${summary.total.toFixed(2)}\n` +
+      `📝 ${summary.count} gastos\n\n*Por categoría:*\n${top}`
+    );
+  } catch (error) {
+    logger.error("Error handling query command:", error);
+    await twilioService.sendMessage(
+      phoneNumber,
+      "❌ No pude obtener esa información. Intenta de nuevo."
+    );
+  }
+}
+
+/**
  * Handle bot commands (wallet, pendientes, historial)
  * @param {UserData} user - User data
  * @param {Account} account - Active account
@@ -1071,11 +1295,20 @@ async function handleBotCommand(
       );
       break;
     }
+    case "olvidar_historial_prompt": {
+      await twilioService.sendMessage(
+        phoneNumber,
+        "⚠️ Esto borrará *todo* lo que aprendí de tus " +
+        "clasificaciones y no se puede deshacer.\n\n" +
+        "Si estás seguro, responde: *olvidar historial confirmar*"
+      );
+      break;
+    }
     case "olvidar_historial": {
       await learningLog.softDeleteAll(user.id);
       await twilioService.sendMessage(
         phoneNumber,
-        "🗑️ Tu historial de aprendizaje fue borrado."
+        "🗑️ Listo. Borré tu historial de aprendizaje."
       );
       break;
     }

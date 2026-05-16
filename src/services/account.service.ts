@@ -6,6 +6,16 @@ const DEFAULT_MONEDA = "PEN";
 const SESSION_TTL_MINUTES_DEFAULT = 30;
 const SESSION_DOC_ID = "whatsapp";
 
+// El usuario existe pero no tiene ninguna cuenta en la colección canónica
+// `accounts` (dueña: web app). El bot no crea cuentas → es un dead-end que
+// el caller debe convertir en un mensaje guiado, no en un retry/fallo.
+export class NoCanonicalAccountError extends Error {
+  constructor(public readonly userId: string) {
+    super(`Usuario ${userId} sin cuentas en la coleccion canonica accounts`);
+    this.name = "NoCanonicalAccountError";
+  }
+}
+
 export class AccountService {
   private db: FirebaseFirestore.Firestore;
 
@@ -150,12 +160,16 @@ export class AccountService {
       snap = await col.where("userId", "==", userId).limit(1).get();
     }
     if (snap.empty) {
-      throw new Error(
-        `Usuario ${userId} sin cuentas en la coleccion canonica ` +
-          "accounts. Crea una cuenta predeterminada en el web app."
-      );
+      throw new NoCanonicalAccountError(userId);
     }
-    const doc = snap.docs[0];
+    return AccountService.mapCanonical(snap.docs[0]);
+  }
+
+  // Mapea un doc de la colección canónica `accounts` (campos del web app:
+  // name/currency/isDefault/bankBalance/cashBalance) al modelo `Account`.
+  private static mapCanonical(
+    doc: FirebaseFirestore.QueryDocumentSnapshot
+  ): Account {
     const d = doc.data() as Record<string, unknown>;
     return {
       id: doc.id,
@@ -168,6 +182,21 @@ export class AccountService {
       createdAt: (d.createdAt as Account["createdAt"]) ?? Timestamp.now(),
       updatedAt: (d.updatedAt as Account["updatedAt"]) ?? Timestamp.now(),
     };
+  }
+
+  // Cuentas reales del usuario (colección canónica, las que referencian los
+  // expenses). Distinto de listByUser (modelo legacy users/{uid}/accounts).
+  async listCanonical(userId: string): Promise<Account[]> {
+    try {
+      const snap = await this.db
+        .collection("accounts")
+        .where("userId", "==", userId)
+        .get();
+      return snap.docs.map((doc) => AccountService.mapCanonical(doc));
+    } catch (error) {
+      logger.error("Error listing canonical accounts:", error);
+      return [];
+    }
   }
 
   async getSessionAccount(userId: string): Promise<Account | null> {

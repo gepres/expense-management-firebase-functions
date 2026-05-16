@@ -121,6 +121,7 @@ export type BotCommand =
   | { kind: "movimientos" }
   | { kind: "historial" }
   | { kind: "olvidar_historial" }
+  | { kind: "olvidar_historial_prompt" }
   | { kind: "pendientes" }
   | { kind: "ingreso"; monto: number; descripcion: string }
   | { kind: "transferir"; monto: number; cuenta: string }
@@ -130,6 +131,22 @@ export type BotCommand =
       categoria: string;
       subcategoria?: string;
     };
+
+// Consultas de solo-lectura (el bot "responde", no solo registra).
+// `periodRaw` es el token de periodo crudo (hoy/semana/mes/mes pasado/
+// nombre de mes); lo resuelve MessageParser.resolveQueryPeriod.
+export type QueryCommand =
+  | { kind: "spent"; periodRaw: string; categoria?: string }
+  | { kind: "list"; periodRaw: string }
+  | { kind: "categories" }
+  | { kind: "accounts" }
+  | { kind: "payments" };
+
+export interface ResolvedPeriod {
+  start: Date;
+  end: Date;
+  label: string;
+}
 
 // ─────────────────────────────────────────────────────────────────────────
 // Wallet: accounts + movements (ledger)
