@@ -2,7 +2,7 @@
 
 Catálogo de capacidades del sistema, agrupadas por canal de entrada y por capa.
 
-> Versión: 2.2.0 · Modelo NLU: `claude-sonnet-4-20250514` · Transcripción: `whisper-1`
+> Versión: 2.6.0 · NLU: Anthropic Sonnet 4.6 + Haiku 4.5 (por env, `src/config/models.ts`) · Transcripción: `gpt-4o-mini-transcribe`
 
 ---
 
@@ -259,6 +259,41 @@ Periodos (`MessageParser.resolveQueryPeriod`, lógica pura testeada): `hoy`, `ay
 | `mi historial` / `aprendizajes` | Decisiones recientes |
 | `olvidar historial` | Pide confirmación (acción destructiva) |
 | `olvidar historial confirmar` | Ejecuta el soft delete del historial |
+
+### Editar el último gasto + estado de conversación
+Acciones que mutan/destruyen requieren confirmación. Se modela con un **estado de conversación corto**: `PendingActionService` guarda un `PendingAction` en `users/{uid}/sessions/pending_action` (TTL 10 min).
+
+Orden en `processTextMessage` (crítico): la **confirmación se evalúa primero**, antes de cuenta/bot/ayuda/consulta/gasto.
+- `parseConfirmation` → `yes` ejecuta la acción y limpia; `no` cancela; mensaje **no relacionado** → se abandona la pendiente y se procesa normal (no atrapar al usuario).
+- `parseEditCommand` (sin IDs): `borrar último` / `eliminar el último` / `deshacer`; `corregir monto <n>` / `"no, eran <n>"` / `"el último era <n>"`.
+
+| Comando | Acción |
+|---------|--------|
+| `borrar último` / `deshacer` | Deja pendiente → al confirmar, `ExpenseService.deleteExpense` |
+| `corregir monto <n>` | Deja pendiente → al confirmar, `ExpenseService.updateAmount` |
+| `sí` / `no` | Resuelve la confirmación pendiente |
+
+`getLastExpense` (por `createdAt` desc) evita que el usuario copie un ID. No toca saldo/ledger (consistente con el desacople "Opción A").
+
+---
+
+## Observabilidad
+
+`onWhatsAppQueueFailed` (`onDocumentUpdated` sobre `whatsapp_queue`) es la **única superficie de alerta**: capta cualquier transición a `status: "failed"` (sin importar el camino que la causó) y emite un log estructurado estable. Configurar una alert policy en Cloud Logging:
+
+```
+resource.type="cloud_run_revision"
+jsonPayload.event="whatsapp_queue_failed"
+severity=ERROR
+```
+
+Guard con early-return → costo ~nulo en los updates normales (`pending`/`processing`/`completed`).
+
+## CI
+
+`.github/workflows/ci.yml` en cada push/PR a `main`:
+- **`test`** (gate obligatorio): `npm ci` → lint → build → `npm test` (Node 22).
+- **`smoke`**: Java 21 + `.secret.local` dummy → `npm run smoke` (end-to-end en emulador). Más confiable en CI que local (VM efímera, sin el cuelgue del puerto 8080).
 
 ---
 

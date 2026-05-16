@@ -3,6 +3,7 @@ import {
   BotCommand,
   QueryCommand,
   ResolvedPeriod,
+  EditCommand,
 } from "../types";
 
 // Meses ES (incl. variante "setiembre"). Índice 0 = enero.
@@ -387,6 +388,64 @@ export class MessageParser {
       return { kind: "spent", periodRaw, categoria };
     }
 
+    return null;
+  }
+
+  // Edición del ÚLTIMO gasto, sin IDs. Reconoce:
+  //  - borrar/eliminar/anular el último, "deshacer"
+  //  - corregir el monto del último ("corregir monto 60", "el último
+  //    eran 60", "no, eran 60", "el monto era 60")
+  static parseEditCommand(message: string): EditCommand | null {
+    const m = MessageParser.normalizeForMatching(
+      message.trim().replace(/^\//, "")
+    );
+
+    if (
+      /^(borrar|eliminar|anular|borra|elimina)( el)?( ultimo)( gasto)?$/
+        .test(m) ||
+      m === "deshacer" ||
+      m === "ultimo gasto borrar"
+    ) {
+      return { kind: "delete_last" };
+    }
+
+    // Captura el monto en frases de corrección del último gasto.
+    // OJO: "corrige" tiene raíz "corrig-", "corregir" tiene "correg-".
+    const num = "(\\d+(?:[.,]\\d{1,2})?)";
+    const verbo =
+      "(?:corrige|corregir|corregi|corrijo|cambia|cambiar|cambio)";
+    const patterns = [
+      new RegExp("^" + verbo + "(?: el)? monto(?: a| en| =| de)? " +
+        num + "$"),
+      new RegExp("^(?:el )?(?:ultimo|monto)(?: gasto)? " +
+        "(?:era|eran|es|fue|fueron) " + num + "$"),
+      new RegExp("^no,? ?(?:eran|era|fue|fueron|son) " + num + "$"),
+    ];
+    for (const re of patterns) {
+      const mt = m.match(re);
+      if (mt) {
+        const monto = parseFloat(mt[1].replace(",", "."));
+        if (Number.isFinite(monto)) {
+          return { kind: "correct_amount", monto };
+        }
+      }
+    }
+    return null;
+  }
+
+  // Sí/No para confirmar una acción pendiente. Solo se consulta cuando
+  // hay un pending_action activo. null = no es una confirmación.
+  static parseConfirmation(message: string): "yes" | "no" | null {
+    const m = MessageParser.normalizeForMatching(
+      message.trim().replace(/^\//, "")
+    );
+    if (/^(si|sí|sii+|ya|dale|ok|okey|confirmar|confirmo|correcto|claro)$/
+      .test(m)) {
+      return "yes";
+    }
+    if (/^(no|nop|cancelar|cancela|negativo|para|detente)$/.test(m)) {
+      return "no";
+    }
     return null;
   }
 

@@ -4,7 +4,7 @@ Asistente de gastos por WhatsApp construido sobre **Firebase Functions + Firesto
 
 Cada gasto se vincula a una **cuenta canónica** (el saldo y el ledger los gestiona el web app — el bot solo registra el gasto y lee el saldo) y cada decisión de clasificación se registra en un **historial de aprendizaje** por usuario que personaliza futuras inferencias.
 
-> Versión: 2.5.0 · Node 22 · TypeScript 5.3 · Firebase Functions v2 (`firebase-functions@^6.6.0`)
+> Versión: 2.6.0 · Node 22 · TypeScript 5.3 · Firebase Functions v2 (`firebase-functions@^6.6.0`) · CI en GitHub Actions
 
 ---
 
@@ -80,11 +80,13 @@ gastos-firebase-functions/
 │   │   ├── expense.service.ts            # CRUD + summary/consultas por rango
 │   │   ├── account.service.ts            # Cuenta activa + cuentas canónicas
 │   │   ├── onboarding.service.ts         # Primer contacto (idempotente)
+│   │   ├── pending-action.service.ts     # Estado de conversación (confirmar sí/no, TTL)
 │   │   ├── user.service.ts               # Validación por whatsappPhone
 │   │   └── twilio.service.ts             # Envío de mensajes WhatsApp
 │   └── utils/
 │       ├── message-parser.ts             # Normalización, regex, comandos, consultas
 │       └── media-downloader.ts           # Descarga autenticada de Twilio media
+├── .github/workflows/ci.yml              # CI: test (lint+build+test) + smoke (emulador)
 ├── docs/                                 # Documentación extendida (ver más abajo)
 ├── firebase.json                         # solo functions + emuladores (sin firestore)
 ├── .firebaserc
@@ -165,6 +167,16 @@ gastos-firebase-functions/
 ### `healthCheck`
 - **Tipo:** HTTPS (v2 `onRequest`)
 - **Respuesta:** JSON con `status`, `timestamp`, `service` y flags de features activas.
+
+### `onWhatsAppQueueFailed`
+- **Tipo:** Background trigger (`onDocumentUpdated` sobre `whatsapp_queue/{queueId}`)
+- **Flujo:** única superficie de observabilidad. Cuando un doc transiciona a `status: "failed"` emite un log estructurado estable `jsonPayload.event="whatsapp_queue_failed"` para una alert policy de Cloud Logging:
+  ```
+  resource.type="cloud_run_revision"
+  jsonPayload.event="whatsapp_queue_failed"
+  severity=ERROR
+  ```
+  Guard con early-return → costo ~nulo en los updates normales (pending/processing/completed).
 
 ---
 
@@ -351,6 +363,21 @@ Periodos: `hoy`, `ayer`, `esta semana`, `este mes`, `mes pasado`, nombre de mes.
 | `mi historial` | `aprendizajes`                      | Historial de aprendizaje       |
 | `olvidar historial` | + `olvidar historial confirmar` | Borra el aprendizaje (pide confirmación) |
 
+### Editar el último gasto (sin IDs, con confirmación)
+Estado de conversación corto (`users/{uid}/sessions/pending_action`, TTL 10 min). El comando deja una acción **pendiente** y el bot pide *sí/no* antes de mutar nada. Un "sí/no" suelto responde a la pendiente; un mensaje no relacionado la abandona (no atrapa al usuario).
+
+| Comando | Alias / forma | Acción |
+|---------|---------------|--------|
+| `borrar último` | `eliminar el último`, `deshacer` | Borra tu último gasto (confirma sí/no) |
+| `corregir monto <n>` | `"no, eran <n>"`, `"el último era <n>"` | Corrige el monto del último gasto (confirma sí/no) |
+| `sí` / `no` | `confirmar`, `cancelar`, … | Responde a la confirmación pendiente |
+
+```
+Tú: 50 almuerzo        → ✅ registrado
+Tú: no, eran 60        → ✏️ ¿Corrijo «almuerzo» 50 → 60? sí/no
+Tú: sí                 → ✅ Listo: ahora PEN 60.00
+```
+
 Ejemplos detallados de I/O en [`docs/EXAMPLES.md`](docs/EXAMPLES.md).
 
 ---
@@ -362,6 +389,8 @@ Ejemplos detallados de I/O en [`docs/EXAMPLES.md`](docs/EXAMPLES.md).
 | `npm run build`     | Compila TypeScript a `lib/`                          |
 | `npm run build:watch` | Compilación incremental                            |
 | `npm run lint`      | Ejecuta ESLint                                       |
+| `npm test`          | Build + `node:test` (lib/__tests__)                  |
+| `npm run smoke`     | Build + `emulators:exec` → smoke end-to-end          |
 | `npm run serve`     | Build + emuladores Firebase (solo functions)         |
 | `npm run shell`     | Functions shell interactivo                          |
 | `npm run deploy`    | `firebase deploy --only functions`                   |

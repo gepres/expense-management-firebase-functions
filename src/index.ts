@@ -1,4 +1,7 @@
-import { onDocumentCreated } from "firebase-functions/v2/firestore";
+import {
+  onDocumentCreated,
+  onDocumentUpdated,
+} from "firebase-functions/v2/firestore";
 import { onRequest } from "firebase-functions/v2/https";
 import { defineSecret } from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
@@ -12,6 +15,8 @@ import {
   LearningSource,
   BotCommand,
   QueryCommand,
+  EditCommand,
+  PendingAction,
 } from "./types";
 import { AnthropicService } from "./services/anthropic.service";
 import { TwilioService } from "./services/twilio.service";
@@ -27,6 +32,7 @@ import {
 } from "./services/inference.service";
 import { LearningLogService } from "./services/learning-log.service";
 import { OnboardingService } from "./services/onboarding.service";
+import { PendingActionService } from "./services/pending-action.service";
 import { TranscriptionService } from "./services/transcription.service";
 import {
   buildHelpMenu,
@@ -464,6 +470,33 @@ async function processTextMessage(
   const twilioService = new TwilioService();
 
   try {
+    // Confirmación de una acción pendiente (estado de conversación).
+    // PRIMERO: un "sí/no" suelto debe interpretarse como respuesta,
+    // no como gasto/comando.
+    const pendingService = new PendingActionService();
+    const pending = await pendingService.get(user.id);
+    if (pending) {
+      const conf = MessageParser.parseConfirmation(message);
+      if (conf === "yes") {
+        await executePendingAction(phoneNumber, pending);
+        await pendingService.clear(user.id);
+        await snap.ref.update({ status: "completed" });
+        return;
+      }
+      if (conf === "no") {
+        await pendingService.clear(user.id);
+        await twilioService.sendMessage(
+          phoneNumber,
+          "👍 Ok, no hice ningún cambio."
+        );
+        await snap.ref.update({ status: "completed" });
+        return;
+      }
+      // Mensaje no relacionado → se abandona la confirmación y se
+      // procesa normal (no dejar al usuario atrapado).
+      await pendingService.clear(user.id);
+    }
+
     // Account commands (usar cuenta / cuenta actual / cuenta principal)
     const accountCommand = MessageParser.parseAccountCommand(message);
     if (accountCommand) {
@@ -496,6 +529,15 @@ async function processTextMessage(
     const queryCmd = MessageParser.parseQueryCommand(message);
     if (queryCmd) {
       await handleQueryCommand(user, account, phoneNumber, queryCmd);
+      await snap.ref.update({ status: "completed" });
+      return;
+    }
+
+    // Editar el último gasto sin IDs (borrar / corregir monto).
+    // Deja una acción pendiente de confirmación (sí/no).
+    const editCmd = MessageParser.parseEditCommand(message);
+    if (editCmd) {
+      await handleEditCommand(user, phoneNumber, editCmd);
       await snap.ref.update({ status: "completed" });
       return;
     }
@@ -1056,6 +1098,119 @@ async function handleQueryCommand(
 }
 
 /**
+ * Edición del último gasto: valida y deja una acción pendiente de
+ * confirmación (no muta nada todavía — eso lo hace executePendingAction
+ * al recibir "sí").
+ * @param {UserData} user - User data
+ * @param {string} phoneNumber - User's phone number
+ * @param {EditCommand} cmd - Parsed edit command
+ * @return {Promise<void>} resolves when done
+ */
+async function handleEditCommand(
+  user: UserData,
+  phoneNumber: string,
+  cmd: EditCommand
+): Promise<void> {
+  const twilioService = new TwilioService();
+  const expenseService = new ExpenseService();
+  const pendingService = new PendingActionService();
+
+  const last = await expenseService.getLastExpense(user.id);
+  if (!last) {
+    await twilioService.sendMessage(
+      phoneNumber,
+      "No encontré un gasto reciente tuyo para modificar."
+    );
+    return;
+  }
+
+  if (cmd.kind === "delete_last") {
+    await pendingService.set(user.id, {
+      kind: "delete_last",
+      expenseId: last.id,
+      descripcion: last.descripcion,
+      moneda: last.moneda,
+      montoActual: last.monto,
+    });
+    await twilioService.sendMessage(
+      phoneNumber,
+      "🗑️ ¿Borro tu último gasto?\n\n" +
+      `*${last.moneda} ${last.monto.toFixed(2)}* — ${last.descripcion}\n\n` +
+      "Responde *sí* o *no*."
+    );
+    return;
+  }
+
+  // correct_amount
+  const check = MessageParser.validateAmount(cmd.monto);
+  if (!check.ok || check.value === undefined) {
+    await twilioService.sendMessage(phoneNumber, `❌ ${check.error}`);
+    return;
+  }
+  await pendingService.set(user.id, {
+    kind: "correct_amount",
+    expenseId: last.id,
+    descripcion: last.descripcion,
+    moneda: last.moneda,
+    montoActual: last.monto,
+    montoNuevo: check.value,
+  });
+  await twilioService.sendMessage(
+    phoneNumber,
+    `✏️ ¿Corrijo el monto de *${last.descripcion}*?\n\n` +
+    `${last.moneda} ${last.monto.toFixed(2)} → ` +
+    `*${last.moneda} ${check.value.toFixed(2)}*\n\n` +
+    "Responde *sí* o *no*."
+  );
+}
+
+/**
+ * Ejecuta una acción confirmada (el usuario respondió "sí").
+ * @param {string} phoneNumber - User's phone number
+ * @param {PendingAction} pending - The confirmed pending action
+ * @return {Promise<void>} resolves when done
+ */
+async function executePendingAction(
+  phoneNumber: string,
+  pending: PendingAction
+): Promise<void> {
+  const twilioService = new TwilioService();
+  const expenseService = new ExpenseService();
+
+  if (pending.kind === "delete_last") {
+    const ok = await expenseService.deleteExpense(pending.expenseId);
+    await twilioService.sendMessage(
+      phoneNumber,
+      ok ?
+        `🗑️ Listo, borré *${pending.moneda} ` +
+          `${pending.montoActual.toFixed(2)}* — ${pending.descripcion}.` :
+        "❌ No pude borrar el gasto. Intenta de nuevo."
+    );
+    return;
+  }
+
+  // correct_amount
+  if (pending.montoNuevo === undefined) {
+    await twilioService.sendMessage(
+      phoneNumber,
+      "❌ No tengo el nuevo monto. Intenta de nuevo."
+    );
+    return;
+  }
+  const ok = await expenseService.updateAmount(
+    pending.expenseId,
+    pending.montoNuevo
+  );
+  await twilioService.sendMessage(
+    phoneNumber,
+    ok ?
+      `✅ Listo: *${pending.descripcion}* ahora es ` +
+        `${pending.moneda} ${pending.montoNuevo.toFixed(2)}.` :
+      "❌ No pude actualizar el monto. Intenta de nuevo."
+  );
+}
+
+/**
  * Handle bot commands (wallet, pendientes, historial)
  * @param {UserData} user - User data
  * @param {Account} account - Active account
@@ -1517,3 +1672,38 @@ export const healthCheck = onRequest((req, res) => {
     },
   });
 });
+
+/**
+ * Observabilidad: única superficie de alerta para fallos del pipeline.
+ * Capta cualquier transición de `whatsapp_queue.status` → "failed" (sin
+ * importar qué camino la causó) y emite un log estructurado estable.
+ * Configurar en Cloud Logging una alert policy con el filtro:
+ *   resource.type="cloud_run_revision"
+ *   jsonPayload.event="whatsapp_queue_failed"
+ *   severity=ERROR
+ * Trade-off: se invoca en cada update del doc (pending/processing/…), pero
+ * el guard retorna temprano salvo en la transición a failed (costo ~nulo).
+ */
+export const onWhatsAppQueueFailed = onDocumentUpdated(
+  "whatsapp_queue/{queueId}",
+  (event) => {
+    const change = event.data;
+    if (!change) return;
+    const before = change.before.data() as
+      | WhatsAppQueueDocument
+      | undefined;
+    const after = change.after.data() as
+      | WhatsAppQueueDocument
+      | undefined;
+    if (!after) return;
+    if (before?.status === "failed" || after.status !== "failed") return;
+
+    logger.error("ALERT whatsapp_queue_failed", {
+      event: "whatsapp_queue_failed",
+      queueId: event.params.queueId,
+      phoneNumber: after.phoneNumber,
+      retryCount: after.retryCount,
+      queueError: after.error ?? "unknown",
+    });
+  }
+);

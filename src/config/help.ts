@@ -54,7 +54,11 @@ export const HELP_TOPICS: Record<HelpTopicKey, HelpTopic> = {
       "almuerzo\". La transcribo y la registro.\n\n" +
       "Detecto solo: categoría, método de pago, moneda y " +
       "fecha. Si algo queda dudoso lo marco y te aviso " +
-      "(escribe *ayuda pendientes*).",
+      "(escribe *ayuda pendientes*).\n\n" +
+      "✏️ *¿Te equivocaste?*\n" +
+      "• *borrar último* — borra tu último gasto\n" +
+      "• *corregir monto 60* — corrige el monto del último\n" +
+      "Te pido confirmar (*sí/no*) antes de tocar nada.",
   },
   consultas: {
     menuLabel: "📊 Consultar",

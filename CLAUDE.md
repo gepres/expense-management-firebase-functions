@@ -16,16 +16,17 @@ Asistente de gastos por WhatsApp. `twilioWebhook` (HTTPS, valida `X-Twilio-Signa
 ## 2. Mapa del código
 
 ```
-src/index.ts                          ← funciones (twilioWebhook, processWhatsAppQueue, exportExpenses, healthCheck) + finalizeAndRegisterExpense + comandos
-src/types/index.ts                    ← interfaces compartidas (incl. Account, Movement, LearningLog, BotCommand)
+src/index.ts                          ← funciones (twilioWebhook, processWhatsAppQueue, onWhatsAppQueueFailed, exportExpenses, healthCheck) + finalizeAndRegisterExpense + comandos
+src/types/index.ts                    ← interfaces compartidas (Account, BotCommand, QueryCommand, EditCommand, PendingAction, …)
 src/services/
   anthropic.service.ts                ← parseExpenseMessage + extractReceiptData (Vision)
   transcription.service.ts            ← Whisper, escribe a tmpfile y limpia
   inference.service.ts                ← classify() + resolvePaymentMethod + resolveCurrency + inferVoucherType
-  expense.service.ts                  ← saveExpense (solo expense) + getPending/getById/findByMessageSid/summary + getSummaryBetween/getExpensesBetween (consultas)
+  expense.service.ts                  ← saveExpense (solo expense) + getPending/getById/summary + getSummaryBetween/getExpensesBetween + getLastExpense/deleteExpense/updateAmount
   account.service.ts                  ← cuenta activa (canónica) + listCanonical + NoCanonicalAccountError + sesión wsp
   learning-log.service.ts             ← bitácora de decisiones por usuario (queryRelevant/append/feedback)
   onboarding.service.ts               ← marca primer contacto (idempotente) para el onboarding auto
+  pending-action.service.ts           ← estado de conversación corto (confirmar sí/no), TTL, users/{uid}/sessions/pending_action
   user.service.ts                     ← lookup por whatsappPhone
   twilio.service.ts                   ← sendMessage
 src/config/
@@ -56,6 +57,9 @@ Punto de entrada lógico: `processWhatsAppQueue` en `src/index.ts`. Toda registr
 - **Moneda:** heredada de la cuenta activa salvo override explícito en texto (`resolveCurrency`). Defaults legacy `"otros"`/`"PEN"` ya no aplican a categoría/moneda.
 - **Aprendizaje:** cada decisión se registra en `users/{uid}/learning_log`; las correcciones del usuario (`clasificar`) retroalimentan futuras clasificaciones.
 - **Retry policy:** máximo 3 intentos. Tras el tercer fallo se marca `failed` y se notifica al usuario.
+- **Estado de conversación:** acciones que requieren confirmación (borrar/corregir el último gasto) dejan un `PendingAction` en `users/{uid}/sessions/pending_action` (TTL 10 min). En `processTextMessage` la confirmación se evalúa **primero** (antes que cuenta/bot/ayuda/consulta/gasto): `parseConfirmation` → "yes" ejecuta, "no" cancela, y un mensaje **no relacionado abandona** la pendiente y se procesa normal (no atrapar al usuario). Edición sin IDs: `parseEditCommand` (`borrar último`, `corregir monto N`, `"no, eran N"`, `deshacer`). Acciones destructivas **siempre** confirman antes de mutar.
+- **Observabilidad:** `onWhatsAppQueueFailed` (`onDocumentUpdated` sobre `whatsapp_queue`) es la **única superficie de alerta**: capta cualquier transición a `failed` y emite `logger.error("ALERT whatsapp_queue_failed", {event:"whatsapp_queue_failed", …})`. No espolvorear logs de alerta en cada `catch`; centralizar acá. Alert policy (Cloud Logging): `resource.type="cloud_run_revision" jsonPayload.event="whatsapp_queue_failed" severity=ERROR`.
+- **CI:** `.github/workflows/ci.yml` — job `test` (lint+build+`npm test`, Node 22, gate obligatorio) y job `smoke` (`npm run smoke`, emulador, Java 21). Mantener ambos verdes; si agregas features cubre el parser con unit test y, si toca el pipeline, considera extender el smoke.
 - **Logging:** `functions.logger.{info,warn,error}`. Emojis ya presentes en logs son intencionales para legibilidad — respetarlos al modificar.
 
 ## 4. Decisiones que ya están tomadas (no rediscutir sin pedirlo)
@@ -71,7 +75,9 @@ Punto de entrada lógico: `processWhatsAppQueue` en `src/index.ts`. Toda registr
 1. **Compilación:** `npm run build`. Bloquea el deploy si falla.
 2. **Lint:** `npm run lint` (config: Google + TS plugin). Lint se ejecuta en `predeploy` (`firebase.json`).
 3. **Emulador local:** `npm run serve` levanta solo Functions. Para probar manualmente, crear un doc en `whatsapp_queue` con `status: "pending"` y `retryCount: 0`.
-4. **Tests:** `npm test` (runner nativo `node:test` sobre `lib/__tests__`, sin deps extra). Cubre lógica pura (`MessageParser`, `phraseMatches`, `tokenizeForLearning`). Se ejecuta en `predeploy`. Para lógica con Firestore, `firebase-functions-test` sigue disponible (sin uso aún).
+4. **Tests:** `npm test` (runner nativo `node:test` sobre `lib/__tests__`, sin deps extra). Cubre lógica pura (`MessageParser` incl. `parseQueryCommand`/`parseEditCommand`/`parseConfirmation`, `phraseMatches`, help). Se ejecuta en `predeploy` y en CI.
+5. **Smoke (emulador):** `npm run smoke` (`firebase emulators:exec`, one-shot) siembra cuenta canónica + dead-end, encola los caminos críticos y assert­a el estado en Firestore. Requiere `.secret.local` (Twilio puede ser dummy) y Java. **Trampa local:** el emulador deja un `java` colgado en el puerto 8080 tras cada corrida → liberarlo antes de reintentar (`Get-NetTCPConnection -LocalPort 8080 | Stop-Process`). En CI no aplica (VM efímera).
+6. **CI:** `.github/workflows/ci.yml` corre `test` (gate) y `smoke` en cada push/PR a `main`.
 
 ## 6. Secretos y configuración
 
@@ -141,6 +147,7 @@ Además ya hecho: § G.1 (fallback LLM de fecha, monto atípico, método ambiguo
 npm run build              # tsc → lib/
 npm run lint               # eslint
 npm test                   # build + node:test (lib/__tests__)
+npm run smoke              # build + emulators:exec → smoke end-to-end (libera 8080 si quedó colgado)
 npm run serve              # build + emuladores
 npm run deploy             # firebase deploy --only functions
 npm run backfill:accounts  # migración accountId (idempotente; requiere ADC)

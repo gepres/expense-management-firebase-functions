@@ -232,6 +232,61 @@ export class ExpenseService {
     }
   }
 
+  // Último gasto del usuario (por createdAt) — para "borrar/corregir el
+  // último" sin que el usuario tenga que copiar un ID.
+  async getLastExpense(userId: string): Promise<{
+    id: string;
+    monto: number;
+    moneda: string;
+    descripcion: string;
+    categoria: string;
+  } | null> {
+    try {
+      const snap = await this.db
+        .collection("expenses")
+        .where("userId", "==", userId)
+        .orderBy("createdAt", "desc")
+        .limit(1)
+        .get();
+      if (snap.empty) return null;
+      const d = snap.docs[0];
+      const data = d.data();
+      return {
+        id: d.id,
+        monto: Number(data.monto) || 0,
+        moneda: data.moneda,
+        descripcion: data.descripcion,
+        categoria: data.categoria,
+      };
+    } catch (error) {
+      logger.error("Error fetching last expense:", error);
+      return null;
+    }
+  }
+
+  async deleteExpense(expenseId: string): Promise<boolean> {
+    try {
+      await this.db.collection("expenses").doc(expenseId).delete();
+      return true;
+    } catch (error) {
+      logger.error("Error deleting expense:", error);
+      return false;
+    }
+  }
+
+  async updateAmount(expenseId: string, monto: number): Promise<boolean> {
+    try {
+      await this.db.collection("expenses").doc(expenseId).update({
+        monto: monto,
+        updatedAt: Timestamp.now(),
+      });
+      return true;
+    } catch (error) {
+      logger.error("Error updating expense amount:", error);
+      return false;
+    }
+  }
+
   async updateClassification(
     expenseId: string,
     categoria: string,

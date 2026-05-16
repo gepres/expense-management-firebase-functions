@@ -148,6 +148,24 @@ export interface ResolvedPeriod {
   label: string;
 }
 
+// Edición del último gasto sin necesidad de IDs. parseEditCommand.
+export type EditCommand =
+  | { kind: "delete_last" }
+  | { kind: "correct_amount"; monto: number };
+
+// Acción pendiente de confirmación (estado de conversación corto, TTL).
+// Vive en users/{uid}/sessions/pending_action.
+export interface PendingAction {
+  kind: "delete_last" | "correct_amount";
+  expenseId: string;
+  descripcion: string;
+  moneda: string;
+  montoActual: number;
+  montoNuevo?: number; // solo correct_amount
+  setAt: Timestamp;
+  expiresAt: Timestamp;
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // Wallet: accounts + movements (ledger)
 // Decisiones cerradas 2026-05-14 — ver docs/ROADMAP.md § F.

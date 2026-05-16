@@ -184,6 +184,42 @@ test("resolveQueryPeriod: rangos y etiquetas", () => {
   assert.equal(pasado.start.getDate(), 1);
 });
 
+test("parseEditCommand: borrar / corregir último", () => {
+  assert.deepEqual(MessageParser.parseEditCommand("borrar último"), {
+    kind: "delete_last",
+  });
+  assert.deepEqual(MessageParser.parseEditCommand("elimina el ultimo"), {
+    kind: "delete_last",
+  });
+  assert.deepEqual(MessageParser.parseEditCommand("deshacer"), {
+    kind: "delete_last",
+  });
+  assert.deepEqual(
+    MessageParser.parseEditCommand("corrige el monto a 60"),
+    { kind: "correct_amount", monto: 60 }
+  );
+  assert.deepEqual(MessageParser.parseEditCommand("no, eran 25.50"), {
+    kind: "correct_amount",
+    monto: 25.5,
+  });
+  assert.deepEqual(MessageParser.parseEditCommand("el ultimo era 80"), {
+    kind: "correct_amount",
+    monto: 80,
+  });
+  assert.equal(MessageParser.parseEditCommand("50 almuerzo"), null);
+  assert.equal(MessageParser.parseEditCommand("borrar"), null);
+});
+
+test("parseConfirmation: sí / no / null", () => {
+  assert.equal(MessageParser.parseConfirmation("sí"), "yes");
+  assert.equal(MessageParser.parseConfirmation("Si"), "yes");
+  assert.equal(MessageParser.parseConfirmation("confirmar"), "yes");
+  assert.equal(MessageParser.parseConfirmation("no"), "no");
+  assert.equal(MessageParser.parseConfirmation("cancelar"), "no");
+  assert.equal(MessageParser.parseConfirmation("no quiero"), null);
+  assert.equal(MessageParser.parseConfirmation("50 almuerzo"), null);
+});
+
 test("hasTemporalHint", () => {
   assert.equal(
     MessageParser.hasTemporalHint("lo compré hace una semana"),

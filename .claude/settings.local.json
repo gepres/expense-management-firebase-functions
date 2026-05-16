@@ -62,7 +62,9 @@
       "Bash(npx --no-install firebase login:list)",
       "Bash(npx --no-install firebase use)",
       "Bash(npm install *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(sed -n '/RESULTADOS/,/OK/p' /tmp/smoke.log)"
     ]
   }
 }

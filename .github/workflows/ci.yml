@@ -1,0 +1,61 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancela corridas viejas del mismo ref si llega un push nuevo.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Rápido y determinista: gate obligatorio en cada push/PR.
+  test:
+    name: build · lint · unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+      - run: npm test
+
+  # Smoke end-to-end contra el emulador (Firestore + Functions).
+  # Más lento/menos determinista que `test`; corre en paralelo.
+  smoke:
+    name: smoke (emulador)
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      # firebase-tools@15 exige JDK >= 21 para el emulador de Firestore.
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+      - run: npm ci
+      - run: npm i -g firebase-tools
+      # Secrets dummy: el smoke no llama LLM (regex/commands) y los envíos
+      # Twilio fallan en silencio. El SID debe empezar con "AC" o el
+      # constructor de TwilioService lanza.
+      - name: dummy .secret.local
+        run: |
+          cat > .secret.local <<'EOF'
+          TWILIO_ACCOUNT_SID=AC00000000000000000000000000000000
+          TWILIO_AUTH_TOKEN=00000000000000000000000000000000
+          TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886
+          ANTHROPIC_API_KEY=sk-ant-dummy
+          OPENAI_API_KEY=sk-dummy
+          EOF
+      - run: npm run smoke
