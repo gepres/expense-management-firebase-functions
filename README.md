@@ -2,9 +2,9 @@
 
 Asistente de gastos por WhatsApp construido sobre **Firebase Functions + Firestore**. Recibe mensajes de texto, imágenes (comprobantes, Yape, Plin) y notas de voz, los interpreta con **Anthropic Claude** (texto + Vision) y **OpenAI** (transcripción de audio), y registra los gastos en Firestore.
 
-Cada gasto se vincula a una **cuenta** (wallet con saldo sincronizado vía ledger de movimientos) y cada decisión de clasificación se registra en un **historial de aprendizaje** por usuario que personaliza futuras inferencias.
+Cada gasto se vincula a una **cuenta canónica** (el saldo y el ledger los gestiona el web app — el bot solo registra el gasto y lee el saldo) y cada decisión de clasificación se registra en un **historial de aprendizaje** por usuario que personaliza futuras inferencias.
 
-> Versión: 2.4.0 · Node 20 · TypeScript 5.3 · Firebase Functions v2
+> Versión: 2.5.0 · Node 22 · TypeScript 5.3 · Firebase Functions v2 (`firebase-functions@^6.6.0`)
 
 ---
 
@@ -53,7 +53,7 @@ Tres canales de entrada (texto / imagen / audio), un único pipeline de inferenc
 
 | Capa            | Tecnología                                     |
 |-----------------|------------------------------------------------|
-| Runtime         | Node.js 20, Firebase Functions v2              |
+| Runtime         | Node.js 22, Firebase Functions v2 (v6)         |
 | Lenguaje        | TypeScript 5.3 (strict)                        |
 | Persistencia    | Firestore                                      |
 | Mensajería      | Twilio WhatsApp Business API                   |
@@ -341,11 +341,10 @@ Periodos: `hoy`, `ayer`, `esta semana`, `este mes`, `mes pasado`, nombre de mes.
 |---------|---------------------------------------------|--------------------------------|
 | `inicio`| `hola`, `hi`, `start`                       | Bienvenida / onboarding        |
 | `resumen`| `summary`, `total`, `ver gastos`           | Total histórico por categoría  |
-| `saldo` | `mi saldo`                                  | Saldo de la cuenta activa      |
-| `saldos`| `saldo de cuentas`                          | Saldo de todas las cuentas     |
-| `movimientos` | —                                     | Últimos movimientos            |
-| `ingreso <monto> <desc>` | —                          | Registra un ingreso            |
-| `transferir <monto> a <cuenta>` | —                   | Transferencia entre cuentas    |
+| `saldo` | `mi saldo`                                  | Saldo de la cuenta activa (canónica) |
+| `saldos`| `saldo de cuentas`                          | Saldo de todas las cuentas (canónicas) |
+| `movimientos` | —                                     | Deriva a la app (el bot no lleva ledger) |
+| `ingreso` / `transferir` | —                          | Deriva a la app (saldo/ledger = web app) |
 | `usar cuenta <nombre>` | `cuenta actual`, `cuenta principal` | Cambia/consulta la cuenta activa |
 | `pendientes` | `clasificar`                          | Gastos sin clasificar / a revisar |
 | `clasificar <id> <cat> [subcat]` | —                  | Reclasifica un gasto (alimenta el aprendizaje) |

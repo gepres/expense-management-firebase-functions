@@ -8,7 +8,7 @@ Asistente de gastos por WhatsApp. `twilioWebhook` (HTTPS, valida `X-Twilio-Signa
 
 > **Ingestión activa (desde 2026-05-15):** Twilio apunta a `twilioWebhook` de este repo en producción (`https://us-central1-expense-app-gepres.cloudfunctions.net/twilioWebhook`, 2ª gen). El webhook NestJS/Vercel (`gastos-backend` `POST /api/whatsapp/webhook`) queda como **rollback** sin tráfico y **sin** validación de firma. Caveat: `twilioWebhook` encola con `.add()` (ID autogenerado) → un reintento de Twilio crea 2 docs en la cola; el gasto NO se duplica (idempotencia por `messageSid` en `finalizeAndRegisterExpense`). Fuente cruzada: `gastos-backend/WHATSAPP_FLOW.md`.
 
-- Runtime: **Node 20**, **Firebase Functions v2** (`onDocumentCreated`/`onRequest`), **TypeScript 5.3** (strict).
+- Runtime: **Node 22**, **Firebase Functions v2** (`firebase-functions@^6.6.0`; `onDocumentCreated`/`onRequest`), **TypeScript 5.3** (strict). Node 20 quedó deprecado (decomisión 2026-10-30); el runtime sale de `package.json` `engines.node`. firebase-functions v7 es un major aún no migrado.
 - NLU: **Anthropic Claude `claude-sonnet-4-20250514`** (texto + Vision).
 - Audio: **OpenAI Whisper (`whisper-1`)**, idioma `es`.
 - Mensajería: **Twilio WhatsApp**.
@@ -22,9 +22,8 @@ src/services/
   anthropic.service.ts                ← parseExpenseMessage + extractReceiptData (Vision)
   transcription.service.ts            ← Whisper, escribe a tmpfile y limpia
   inference.service.ts                ← classify() + resolvePaymentMethod + resolveCurrency + inferVoucherType
-  expense.service.ts                  ← saveExpense (transaccional) + getPending/getById/findByMessageSid/summary
-  account.service.ts                  ← cuentas + resolución de cuenta activa + sesión wsp
-  movement.service.ts                 ← ledger append-only (writeMovement/transfer), fuente de verdad del saldo
+  expense.service.ts                  ← saveExpense (solo expense) + getPending/getById/findByMessageSid/summary + getSummaryBetween/getExpensesBetween (consultas)
+  account.service.ts                  ← cuenta activa (canónica) + listCanonical + NoCanonicalAccountError + sesión wsp
   learning-log.service.ts             ← bitácora de decisiones por usuario (queryRelevant/append/feedback)
   onboarding.service.ts               ← marca primer contacto (idempotente) para el onboarding auto
   user.service.ts                     ← lookup por whatsappPhone
@@ -50,7 +49,7 @@ Punto de entrada lógico: `processWhatsAppQueue` en `src/index.ts`. Toda registr
 - **Ayuda/onboarding:** fuente única en `src/config/help.ts` (`HELP_TOPICS`). El menú (`ayuda`), los temas (`ayuda <clave>`) y la bienvenida se generan de ahí. Al agregar un flujo nuevo, añadir/editar su entrada en `HELP_TOPICS` (aparece solo en el menú) — **no** hardcodear textos de comandos en `index.ts`. Onboarding automático en el 1er contacto tras vincular WhatsApp vía `OnboardingService.tryClaimFirstContact` (idempotente; guard: si ya hay `learning_log` no se saluda — usuario previo a la feature). Cada mensaje debe caber en ~1600 chars (límite WhatsApp); hay tests que lo verifican.
 - **Identidad del gasto:** vinculado por `userId` + `accountId`, **no** por `phoneNumber`. El teléfono solo resuelve al usuario.
 - **Cuenta activa:** todo gasto va a una cuenta (`AccountService.resolveActiveAccount`: sesión wsp → primary → primera → crea "Principal" lazy). Sin `accountId`, `saveExpense` rechaza.
-- **Saldo:** `accounts.saldo` es **caché denormalizado**. La fuente de verdad es `users/{uid}/movements` (ledger append-only). `saveExpense` escribe expense + movement + saldo en **una sola `db.runTransaction()`**. Nunca romper esa atomicidad.
+- **Saldo (Opción A — desacople):** el web app/backend es **dueño único** del saldo y del ledger. Este bot **NO** gestiona saldo ni `movements`: `saveExpense` solo escribe el `expense` contra la cuenta canónica (NO transacción con movement/saldo — el invariante viejo de `db.runTransaction()` quedó obsoleto). `resolveActiveAccount` resuelve desde la colección **canónica top-level `accounts`** (`saldo` derivado = `bankBalance + cashBalance`, solo lectura). Comandos `saldo`/`saldos` = lectura canónica (`AccountService.listCanonical`, NO `listByUser` legacy). `ingreso`/`transferir`/`movimientos` se **retiraron del bot** (responden derivando a la app) — no reintroducir escritura de ledger aquí. `MovementService` y `users/{uid}/{accounts,movements}` legacy fueron eliminados/orfanados.
 - **Nombres de campos en Firestore:** español (`monto`, `categoria`, `descripcion`, `fecha`, `metodoPago`, `moneda`, `voucherType`, `accountId`). Mantener consistencia.
 - **Fechas:** `expense.fecha` se guarda como `Timestamp`. Prioridad de resolución: fecha en el texto (`MessageParser.parseDateFromText`) → fecha del mensaje (`whatsapp_queue.createdAt`) → ya **no** hay default `new Date()` del processing. `dateSource` queda persistido.
 - **Clasificación (`InferenceService.classify`):** orden estricto `suggestions_ideas` → nombre subcategoría → nombre categoría → historial (`learning_log`, por solape de tokens `tokenOverlap` ≥ `MIN_HISTORY_OVERLAP`, prioriza `user_correction`) → **LLM acotado a la taxonomía** (paso 5: reusa el hint libre del LLM o `AnthropicService.classifyAgainstTaxonomy`, solo en miss de 1–4) → `sin_clasificar` (`needsClassification: true`). Pasos 1–3 match por **palabra/frase completa** (`phraseMatches`), nunca `includes` substring; el LLM (paso 5) nunca inventa categorías fuera de las del usuario. Devuelve `matchedTerm`/`matchedLevel` (`suggestion|subcategory|category|history|llm|default`) que se persisten para auditoría.

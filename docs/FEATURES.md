@@ -107,10 +107,11 @@ Mensaje intermedio al usuario:
 
 ## Cuentas y Wallet
 
-Cada gasto pertenece a una **cuenta** (`users/{uid}/accounts`). La cuenta define la **moneda** por defecto y mantiene un **saldo** sincronizado.
+Cada gasto pertenece a una **cuenta canónica** (colección top-level `accounts`, dueño: web app). La cuenta define la **moneda** por defecto.
 
-- **Cuenta activa:** `AccountService.resolveActiveAccount` → sesión WhatsApp (override temporal) → `isPrimary` → primera cuenta → crea `Principal` PEN lazy.
-- **Saldo como ledger:** la fuente de verdad es `users/{uid}/movements` (append-only). `accounts.saldo` es caché. Cada gasto/ingreso/transferencia se escribe en una **transacción Firestore** que actualiza saldo + movement + (para gasto) el expense, todo atómico.
+- **Desacople "Opción A":** el web app/backend es dueño único del saldo y del ledger. El bot **no** escribe `movements` ni `accounts.saldo`; `saveExpense` solo persiste el `expense`.
+- **Cuenta activa:** `AccountService.resolveActiveAccount` → sesión WhatsApp (override temporal) → cuenta canónica `isDefault` → primera cuenta canónica. Si no hay ninguna → `NoCanonicalAccountError` (mensaje guiado, ver "Validación de usuario"). Ya **no** crea cuenta lazy.
+- **Saldo (solo lectura):** `saldo`/`saldos` leen el saldo canónico (`bankBalance + cashBalance`) vía `AccountService.listCanonical`. `ingreso`/`transferir`/`movimientos` se **retiraron del bot** (responden derivando a la app — el ledger lo gestiona el web app).
 - **Cambio de cuenta:** `usar cuenta <nombre>` (override de sesión con TTL), `cuenta actual`, `cuenta principal`.
 
 ## Clasificación (`InferenceService.classify`)
@@ -242,11 +243,11 @@ Periodos (`MessageParser.resolveQueryPeriod`, lógica pura testeada): `hoy`, `ay
 ### Cuentas y wallet
 | Comando | Acción |
 |---------|--------|
-| `saldo` / `mi saldo` | Saldo de la cuenta activa |
-| `saldos` / `saldo de cuentas` | Saldo de todas las cuentas |
-| `movimientos` | Últimos movimientos del ledger |
-| `ingreso <monto> <desc>` | Registra un ingreso (sube el saldo) |
-| `transferir <monto> a <cuenta>` | Transferencia entre cuentas (misma moneda) |
+| `saldo` / `mi saldo` | Saldo de la cuenta activa (lectura canónica) |
+| `saldos` / `saldo de cuentas` | Saldo de todas las cuentas (lectura canónica) |
+| `movimientos` | Deriva a la app + sugiere `gastos de hoy` / `resumen` |
+| `ingreso <monto> <desc>` | Deriva a la app (ingresos = web app) |
+| `transferir <monto> a <cuenta>` | Deriva a la app (transferencias = web app) |
 | `usar cuenta <nombre>` | Cambia la cuenta activa de la sesión |
 | `cuenta actual` / `cuenta principal` | Consulta / vuelve a la principal |
 

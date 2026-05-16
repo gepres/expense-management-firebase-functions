@@ -21,7 +21,6 @@ import {
   AccountService,
   NoCanonicalAccountError,
 } from "./services/account.service";
-import { MovementService } from "./services/movement.service";
 import {
   InferenceService,
   categoryIdForTerm,
@@ -799,10 +798,6 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
   if (args.comercio) {
     msg += `\n🏪 Comercio: ${args.comercio}`;
   }
-  if (saveResult.saldoNuevo !== undefined) {
-    msg += `\n🧮 Saldo ${account.nombre}: ` +
-      `${currency.moneda} ${saveResult.saldoNuevo.toFixed(2)}`;
-  }
   if (classification.needsClassification) {
     msg += "\n\n⚠️ No pude clasificar este gasto. " +
       "Quedó como *sin_clasificar*; puedes crear la categoría/subcategoría " +
@@ -1046,8 +1041,10 @@ async function handleQueryCommand(
     await twilioService.sendMessage(
       phoneNumber,
       `📊 *${period.label}*\n\n` +
-      `💰 Total: ${account.moneda} ${summary.total.toFixed(2)}\n` +
-      `📝 ${summary.count} gastos\n\n*Por categoría:*\n${top}`
+      `💰 Total de ${period.label}: ` +
+      `${account.moneda} ${summary.total.toFixed(2)}\n` +
+      `📝 ${summary.count} gastos\n\n` +
+      `*Top categorías de ${period.label}:*\n${top}`
     );
   } catch (error) {
     logger.error("Error handling query command:", error);
@@ -1074,9 +1071,14 @@ async function handleBotCommand(
 ): Promise<void> {
   const twilioService = new TwilioService();
   const accountService = new AccountService();
-  const movementService = new MovementService();
   const expenseService = new ExpenseService();
   const learningLog = new LearningLogService();
+  // El web app es dueño del saldo/ledger (decisión "Opción A"). Por
+  // WhatsApp solo se LEE el saldo canónico; ingreso/transferencia/
+  // movimientos se gestionan en la app.
+  const appHint = process.env.WEBAPP_URL ?
+    `:\n${process.env.WEBAPP_URL}` :
+    " (sección *Cuentas*).";
 
   try {
     switch (cmd.kind) {
@@ -1089,7 +1091,7 @@ async function handleBotCommand(
       break;
     }
     case "saldos": {
-      const all = await accountService.listByUser(user.id);
+      const all = await accountService.listCanonical(user.id);
       if (all.length === 0) {
         await twilioService.sendMessage(phoneNumber, "No tienes cuentas.");
         break;
@@ -1108,94 +1110,33 @@ async function handleBotCommand(
       break;
     }
     case "movimientos": {
-      const movs = await movementService.getMovementsByAccount(
-        user.id,
-        account.id,
-        10
-      );
-      if (movs.length === 0) {
-        await twilioService.sendMessage(
-          phoneNumber,
-          `Sin movimientos en ${account.nombre}.`
-        );
-        break;
-      }
-      const lines = movs
-        .map((mv) => {
-          const signo = mv.signoEfectivo < 0 ? "-" : "+";
-          return (
-            `${signo}${account.moneda} ${mv.monto.toFixed(2)} ` +
-            `· ${mv.tipo} · ${mv.descripcion}`
-          );
-        })
-        .join("\n");
       await twilioService.sendMessage(
         phoneNumber,
-        `📜 *Movimientos — ${account.nombre}*\n\n${lines}`
+        "📜 El detalle de *movimientos* está en la app" +
+        `${appHint}\n\n` +
+        "Aquí puedo mostrarte tus gastos: escribe " +
+        "*gastos de hoy*, *qué gasté esta semana* o *resumen*."
       );
       break;
     }
     case "ingreso": {
-      const check = MessageParser.validateAmount(cmd.monto);
-      if (!check.ok || check.value === undefined) {
-        await twilioService.sendMessage(phoneNumber, `❌ ${check.error}`);
-        break;
-      }
-      const res = await movementService.writeMovement(user.id, {
-        accountId: account.id,
-        tipo: "ingreso",
-        monto: check.value,
-        descripcion: cmd.descripcion,
-        fecha: Timestamp.now(),
-      });
       await twilioService.sendMessage(
         phoneNumber,
-        `✅ Ingreso: ${account.moneda} ${check.value.toFixed(2)}\n` +
-          `🧮 Saldo ${account.nombre}: ` +
-          `${account.moneda} ${res.saldoNuevo.toFixed(2)}`
+        "💡 Los *ingresos* se registran desde la app" +
+        `${appHint}\n\n` +
+        "Por WhatsApp registro tus *gastos*. Para ver cuánto " +
+        "tienes, escribe *saldo*."
       );
       break;
     }
     case "transferir": {
-      const check = MessageParser.validateAmount(cmd.monto);
-      if (!check.ok || check.value === undefined) {
-        await twilioService.sendMessage(phoneNumber, `❌ ${check.error}`);
-        break;
-      }
-      const target = await accountService.findByNombre(user.id, cmd.cuenta);
-      if (!target) {
-        const all = await accountService.listByUser(user.id);
-        const names = all.map((a) => `• ${a.nombre}`).join("\n");
-        await twilioService.sendMessage(
-          phoneNumber,
-          `❌ No encontré la cuenta "${cmd.cuenta}".\n\n` +
-            `Tus cuentas:\n${names}`
-        );
-        break;
-      }
-      try {
-        const r = await movementService.transfer(user.id, {
-          fromAccountId: account.id,
-          toAccountId: target.id,
-          monto: check.value,
-          descripcion: `Transferencia a ${target.nombre}`,
-        });
-        await twilioService.sendMessage(
-          phoneNumber,
-          `✅ ${account.moneda} ${check.value.toFixed(2)} → ` +
-            `${target.nombre}\n` +
-            `🧮 ${account.nombre}: ${account.moneda} ` +
-            `${r.fromSaldoNuevo.toFixed(2)}\n` +
-            `🧮 ${target.nombre}: ${target.moneda} ` +
-            `${r.toSaldoNuevo.toFixed(2)}`
-        );
-      } catch (err) {
-        await twilioService.sendMessage(
-          phoneNumber,
-          "❌ No pude transferir: " +
-            `${err instanceof Error ? err.message : "error"}`
-        );
-      }
+      await twilioService.sendMessage(
+        phoneNumber,
+        "💡 Las *transferencias entre cuentas* se hacen desde " +
+        `la app${appHint}\n\n` +
+        "Por WhatsApp registro gastos y te muestro tu *saldo* " +
+        "(escribe *saldo* o *saldos*)."
+      );
       break;
     }
     case "pendientes": {

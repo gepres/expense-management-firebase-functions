@@ -94,22 +94,22 @@ export const HELP_TOPICS: Record<HelpTopicKey, HelpTopic> = {
       "a la principal.",
   },
   saldo: {
-    menuLabel: "🧮 Dinero",
-    menuHint: "saldo, ingresos y transferencias",
+    menuLabel: "🧮 Saldo",
+    menuHint: "consulta cuánto tienes",
     aliases: [
       "saldo", "saldos", "dinero", "billetera", "wallet",
       "ingreso", "ingresos", "transferir", "transferencia",
       "movimiento", "movimientos",
     ],
     body:
-      "🧮 *Dinero: saldo, ingresos, transferencias*\n\n" +
-      "• *saldo* — saldo de la cuenta activa\n" +
-      "• *saldos* — saldo de todas tus cuentas\n" +
-      "• *movimientos* — últimos movimientos\n" +
-      "• *ingreso <monto> <descripción>*\n" +
-      "   Ej: \"ingreso 500 sueldo\"\n" +
-      "• *transferir <monto> a <cuenta>*\n" +
-      "   Ej: \"transferir 100 a ahorros\"",
+      "🧮 *Saldo*\n\n" +
+      "• *saldo* — saldo de tu cuenta activa\n" +
+      "• *saldos* — saldo de todas tus cuentas\n\n" +
+      "Los *ingresos*, las *transferencias* y el detalle de " +
+      "*movimientos* se gestionan desde la app (sección " +
+      "Cuentas).\n\n" +
+      "Por WhatsApp registro tus *gastos* y te muestro el " +
+      "saldo y tus *consultas* (escribe *ayuda consultas*).",
   },
   pendientes: {
     menuLabel: "🗂️ Pendientes",
