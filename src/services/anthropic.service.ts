@@ -1,8 +1,22 @@
 import Anthropic from "@anthropic-ai/sdk";
+import {
+  buildReceiptExtractionPrompt,
+  buildVoiceExpensePrompt,
+  parseReceipt,
+  parseVoice,
+  isExtractionError,
+} from "@gastos/expense-ai";
 import { AnthropicResponse, ExpenseData, ReceiptExtractionResult } from "../types";
 import { modelParams } from "../config/models";
 import { recordUsage, UsageContext } from "./usage.service";
 import * as logger from "firebase-functions/logger";
+
+// Fecha de hoy (Perú) para el contexto de fechas relativas del prompt.
+function todayLimaISO(): string {
+  return new Date().toLocaleDateString("en-CA", {
+    timeZone: "America/Lima",
+  });
+}
 
 /** Forma mínima del `usage` que devuelve la API de mensajes. */
 interface AnthropicUsageLike {
@@ -47,44 +61,12 @@ export class AnthropicService {
     usageCtx?: Partial<UsageContext>
   ): Promise<ReceiptExtractionResult | null> {
     try {
-      const prompt = "Analiza esta imagen de un comprobante, recibo o " +
-        "captura de pago (Yape, Plin, transferencia, etc.) " +
-        "y extrae la siguiente información:\n\n" +
-        "Debes responder ÚNICAMENTE con un objeto JSON en el siguiente formato:\n" +
-        "{\n" +
-        "  \"monto\": número (solo el valor numérico, sin símbolos de moneda ni comas),\n" +
-        "  \"comercio\": \"nombre del comercio o destinatario del pago\",\n" +
-        "  \"descripcion\": \"descripción breve del producto/servicio o concepto del pago\",\n" +
-        "  \"fecha\": \"fecha y hora en formato YYYY-MM-DD HH:MM:SS " +
-        "(usa la fecha y hora de hoy si no se menciona)\",\n" +
-        "  \"metodoPago\": \"método de pago detectado " +
-        "(yape, plin, tarjeta, transferencia, efectivo)\",\n" +
-        "  \"moneda\": \"moneda (PEN, USD, EUR, etc.)\",\n" +
-        "  \"categoria\": \"categoría inferida " +
-        "(comida, transporte, salud, entretenimiento, servicios, compras, otros)\",\n" +
-        "  \"subcategoria\": \"subcategoría más específica si es posible inferir, o null\"\n" +
-        "}\n\n" +
-        "Si la imagen NO es un comprobante válido o no puedes extraer la información, " +
-        "responde con:\n" +
-        "{\n" +
-        "  \"error\": \"No se pudo extraer información del comprobante\"\n" +
-        "}\n\n" +
-        "INSTRUCCIONES ESPECÍFICAS:\n" +
-        "- CAPTURAS DE YAPE/PLIN: Busca el monto enviado/recibido (ej: 'S/ 25.50'), " +
-        "el nombre del destinatario, y la fecha de la transacción\n" +
-        "- RECIBOS/BOLETAS FÍSICAS: Extrae el nombre del comercio, monto total, " +
-        "y fecha de emisión\n" +
-        "- FACTURAS: Similar a recibos, extrae RUC si está visible\n" +
-        "- Si ves el logo o interfaz de Yape, el metodoPago debe ser 'yape'\n" +
-        "- Si ves el logo o interfaz de Plin, el metodoPago debe ser 'plin'\n" +
-        "- Infiere la categoría basándote en el nombre del comercio o descripción del servicio\n" +
-        "- Para el monto, solo devuelve el número sin símbolos: '25.50' no 'S/ 25.50'\n" +
-        "- NO incluyas texto adicional fuera del JSON, SOLO el objeto JSON";
-
+      // Prompt + parsing del paquete compartido @gastos/expense-ai
+      // (single source of truth, mismo que gastos-backend web).
       const mp = modelParams("primary");
       const response = await this.client.messages.create({
         // Comprobante (vision) → tier "primary". modelParams resuelve modelo
-        // + thinking/effort desde env (src/config/models.ts).
+        // + thinking/effort desde env (vía @gastos/expense-ai).
         ...mp,
         max_tokens: 1024,
         messages: [{
@@ -100,7 +82,7 @@ export class AnthropicService {
             },
             {
               type: "text",
-              text: prompt,
+              text: buildReceiptExtractionPrompt(),
             },
           ],
         }],
@@ -112,45 +94,30 @@ export class AnthropicService {
       if (content.type !== "text") {
         throw new Error("Unexpected response type from Anthropic");
       }
+      logger.info("Anthropic image extraction response:", content.text.trim());
 
-      const responseText = content.text.trim();
-      logger.info("Anthropic image extraction response:", responseText);
-
-      let jsonText = responseText;
-      if (responseText.includes("```json")) {
-        const match = responseText.match(/```json\s*([\s\S]*?)\s*```/);
-        if (match) {
-          jsonText = match[1];
-        }
-      } else if (responseText.includes("```")) {
-        const match = responseText.match(/```\s*([\s\S]*?)\s*```/);
-        if (match) {
-          jsonText = match[1];
-        }
+      const parsed = parseReceipt(content.text);
+      if (!parsed) {
+        logger.error("No se pudo parsear la respuesta del comprobante");
+        return null;
       }
-
-      const parsed = JSON.parse(jsonText);
-
-      if (parsed.error) {
+      if (isExtractionError(parsed)) {
         logger.warn("Could not extract receipt data:", parsed.error);
         return null;
       }
 
-      // Validate required fields
-      if (!parsed.monto) {
-        logger.error("Missing required field 'monto' in parsed data:", parsed);
-        return null;
-      }
-
+      // Canónico (ES) → ReceiptExtractionResult de este repo.
       return {
-        monto: Number(parsed.monto),
-        comercio: parsed.comercio || "",
-        descripcion: parsed.descripcion || parsed.comercio || "Gasto detectado",
-        fecha: parsed.fecha || new Date().toISOString().split("T")[0],
-        metodoPago: parsed.metodoPago?.toLowerCase() || "efectivo",
-        moneda: parsed.moneda || "PEN",
-        categoria: parsed.categoria || "otros",
-        subcategoria: parsed.subcategoria || null,
+        monto: parsed.monto,
+        comercio: parsed.comercio,
+        descripcion: parsed.descripcion,
+        fecha: parsed.hora ?
+          `${parsed.fecha} ${parsed.hora}` :
+          parsed.fecha,
+        metodoPago: parsed.metodoPago.toLowerCase(),
+        moneda: parsed.moneda,
+        categoria: parsed.categoria,
+        subcategoria: parsed.subcategoria,
       };
     } catch (error) {
       logger.error("Error extracting receipt data with Anthropic:", error);
@@ -169,31 +136,9 @@ export class AnthropicService {
     usageCtx?: Partial<UsageContext>
   ): Promise<AnthropicResponse> {
     try {
-      const prompt = `Analiza el siguiente mensaje de WhatsApp y extrae información de un gasto.
-
-Mensaje: "${message}"
-
-Debes responder ÚNICAMENTE con un objeto JSON en el siguiente formato:
-{
-  "monto": número (solo el valor numérico, sin símbolos),
-  "categoria": "categoría del gasto (comida, transporte, entretenimiento, salud, hogar, servicios, otros)",
-  "descripcion": "descripción breve del gasto",
-  "fecha": "fecha y hora en formato YYYY-MM-DD HH:MM:SS (usa la fecha y hora de hoy si no se menciona)",
-  "moneda": "moneda (PEN(soles), USD(dolares))",
-  "metodoPago": "metodo de pago (yape, plin, efectivo, transferencia, etc.)",
-}
-
-Si el mensaje NO contiene información de un gasto, responde con:
-{
-  "error": "No se pudo identificar información de gasto en el mensaje"
-}
-
-Ejemplos:
-- "Gasté 25 soles en almuerzo" → {"monto": 25, "categoria": "comida", "descripcion": "almuerzo", "fecha": "2025-11-25"}
-- "50 en taxi en efectivo" → {"monto": 50, "categoria": "transporte", "descripcion": "taxi", "fecha": "2025-11-25"}
-- "Compré medicina por 80" → {"monto": 80, "categoria": "salud", "descripcion": "medicina", "fecha": "2025-11-25"}
-
-NO incluyas texto adicional, SOLO el objeto JSON.`;
+      // Prompt + parsing del paquete compartido @gastos/expense-ai
+      // (single source of truth, mismo flujo que voz/web en gastos-backend).
+      const prompt = buildVoiceExpensePrompt(message, todayLimaISO());
 
       const mp = modelParams("primary");
       const response = await this.client.messages.create({
@@ -213,49 +158,37 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
         throw new Error("Unexpected response type from Anthropic");
       }
 
-      const responseText = content.text.trim();
-      logger.info("Anthropic raw response:", responseText);
+      const rawResponse = content.text.trim();
+      logger.info("Anthropic raw response:", rawResponse);
 
-      let jsonText = responseText;
-      if (responseText.includes("```json")) {
-        const match = responseText.match(/```json\s*([\s\S]*?)\s*```/);
-        if (match) {
-          jsonText = match[1];
-        }
-      } else if (responseText.includes("```")) {
-        const match = responseText.match(/```\s*([\s\S]*?)\s*```/);
-        if (match) {
-          jsonText = match[1];
-        }
-      }
-
-      const parsed = JSON.parse(jsonText);
-
-      if (parsed.error) {
-        return {
-          success: false,
-          error: parsed.error,
-          rawResponse: responseText,
-        };
-      }
-
-      if (!parsed.monto || !parsed.categoria || !parsed.descripcion) {
+      const parsed = parseVoice(content.text);
+      if (!parsed) {
         return {
           success: false,
           error: "Respuesta incompleta de Anthropic",
-          rawResponse: responseText,
+          rawResponse,
+        };
+      }
+      if (isExtractionError(parsed)) {
+        return {
+          success: false,
+          error: parsed.error,
+          rawResponse,
         };
       }
 
+      // Canónico (ES) → ExpenseData de este repo. metodoPago/fecha los
+      // refina luego finalizeAndRegisterExpense (resolvePaymentMethod /
+      // parseDateFromText); acá solo se asegura el contrato no-null.
       const expenseData: ExpenseData = {
         userId: "",
-        monto: Number(parsed.monto),
+        monto: parsed.monto,
         categoria: parsed.categoria,
         descripcion: parsed.descripcion,
-        fecha: parsed.fecha || new Date().toISOString(),
-        metodoPago: parsed.metodoPago,
+        fecha: parsed.fecha ?? todayLimaISO(),
+        metodoPago: parsed.metodoPago ?? "",
         moneda: parsed.moneda,
-        subcategoria: null,
+        subcategoria: parsed.subcategoria,
         recurrente: false,
         reimbursementStatus: "pending",
         // voucherType NO se setea acá: lo resuelve inferVoucherType en
@@ -265,7 +198,7 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
       return {
         success: true,
         expenseData,
-        rawResponse: responseText,
+        rawResponse,
       };
     } catch (error) {
       logger.error("Error parsing expense with Anthropic:", error);
