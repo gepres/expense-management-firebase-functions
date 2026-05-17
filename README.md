@@ -4,7 +4,7 @@ Asistente de gastos por WhatsApp construido sobre **Firebase Functions + Firesto
 
 Cada gasto se vincula a una **cuenta canónica** (el saldo y el ledger los gestiona el web app — el bot solo registra el gasto y lee el saldo) y cada decisión de clasificación se registra en un **historial de aprendizaje** por usuario que personaliza futuras inferencias.
 
-> Versión: 2.6.0 · Node 22 · TypeScript 5.3 · Firebase Functions v2 (`firebase-functions@^6.6.0`) · CI en GitHub Actions
+> Versión: 2.7.0 · Node 22 · TypeScript 5.3 · Firebase Functions v2 (`firebase-functions@^6.6.0`) · CI en GitHub Actions
 
 ---
 
@@ -145,6 +145,7 @@ gastos-firebase-functions/
   2. Normaliza el teléfono y valida al usuario (`users.whatsappPhone`). Si no existe, responde y termina.
   2b. **Onboarding automático:** en el primer contacto tras vincular WhatsApp envía la bienvenida (idempotente vía `OnboardingService`; no se repite en reintentos ni a usuarios con historial previo).
   2c. **Sin cuenta canónica:** si el usuario no tiene cuenta, responde con un mensaje guiado (crear cuenta en la app) y termina `completed` — no reintenta.
+  2d. **Cuota de IA:** antes de cualquier camino con IA (imagen/audio/fallback LLM) valida la cuota mensual del usuario (`QuotaService.checkQuota`, mismo doc que el backend). Si excede, responde con la fecha de reinicio y termina `completed` — sin reintento. Comandos/regex no se bloquean. Ver `docs/FEATURES.md` § Consumo y cuota de IA.
   3. Detecta el tipo de contenido:
      - **Audio** (`audio/ogg`, `mpeg`, `mp4`, `amr`, `wav`) → `TranscriptionService` (OpenAI STT) → `AnthropicService.parseExpenseMessage`.
      - **Imagen** (`image/jpeg`, `png`, `gif`, `webp`) → `AnthropicService.extractReceiptData` (Vision).

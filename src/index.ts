@@ -23,6 +23,7 @@ import { AnthropicService } from "./services/anthropic.service";
 import { TwilioService } from "./services/twilio.service";
 import { ExpenseService } from "./services/expense.service";
 import { UserService } from "./services/user.service";
+import { checkQuota } from "./services/quota.service";
 import {
   AccountService,
   NoCanonicalAccountError,
@@ -231,6 +232,31 @@ export const processWhatsAppQueue = onDocumentCreated(
   }
 );
 
+// Fase 2: pre-chequeo de cuota IA antes de un camino que consume IA
+// (imagen/audio/parse de texto por LLM). Si excede, responde por WhatsApp
+// con la fecha de reinicio, cierra el item (sin retry) y devuelve true.
+// Los comandos sin IA (saldo/ayuda/regex) NO pasan por acá → siguen.
+async function aiQuotaBlocked(
+  userId: string,
+  phoneNumber: string,
+  snap: FirebaseFirestore.DocumentSnapshot
+): Promise<boolean> {
+  const q = await checkQuota(userId);
+  if (!q.blocked) return false;
+  const twilioService = new TwilioService();
+  await twilioService.sendMessage(
+    phoneNumber,
+    "🚫 Alcanzaste tu *límite mensual de IA*.\n\n" +
+    `Se reinicia el *${q.resetAt}*. Mientras tanto, los comandos sin IA ` +
+    "(*saldo*, *ayuda*, *resumen*) siguen funcionando."
+  );
+  await snap.ref.update({
+    status: "completed",
+    error: "ai quota exceeded",
+  });
+  return true;
+}
+
 /**
  * Process image messages (receipts, Yape/Plin screenshots)
  * @param {UserData} user - User data
@@ -249,6 +275,7 @@ async function processImageMessage(
   const twilioService = new TwilioService();
 
   try {
+    if (await aiQuotaBlocked(user.id, phoneNumber, snap)) return;
     await twilioService.sendMessage(phoneNumber, "⏳ Procesando imagen...");
 
     // Download image from Twilio
@@ -360,6 +387,7 @@ async function processAudioMessage(
   const twilioService = new TwilioService();
 
   try {
+    if (await aiQuotaBlocked(user.id, phoneNumber, snap)) return;
     await twilioService.sendMessage(phoneNumber, "🎤 Procesando audio...");
 
     // Download audio from Twilio
@@ -574,7 +602,10 @@ async function processTextMessage(
       return;
     }
 
-    // Fallback to Anthropic for complex messages
+    // Fallback a IA: recién acá consume tokens → se aplica cuota
+    // (los comandos/queries/regex de arriba no pasan por aquí).
+    if (await aiQuotaBlocked(user.id, phoneNumber, snap)) return;
+
     logger.info("Using Anthropic to parse message:", message);
     const anthropicService = new AnthropicService();
     const parseResult = await anthropicService.parseExpenseMessage(message, {

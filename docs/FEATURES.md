@@ -175,6 +175,31 @@ Append-only por usuario. Cada decisión de clasificación se registra; el comand
 
 ---
 
+## Consumo y cuota de IA
+
+Feature multi-repo (contrato completo: `gastos/docs/ai-usage.md`).
+
+- **Tracking:** cada llamada a Anthropic/Whisper del bot registra consumo
+  vía `recordUsage()` (`services/usage.service.ts`) — `aiUsageEvents` +
+  `aiUsageMonthly/{uid}_{YYYY-MM}` (Admin SDK, best-effort, nunca rompe).
+  Por decisión de producto **todo lo del bot es `scope:"user"`** (lo
+  inició el usuario al enviar su mensaje). El `uid` se resuelve por
+  `whatsappPhone`.
+- **Cuota (Fase 2):** `checkQuota()` (`services/quota.service.ts`) +
+  `aiQuotaBlocked()` se ejecutan **antes** de los 3 caminos con IA:
+  imagen, audio y el fallback LLM de texto. Si el usuario superó su
+  cuota mensual (límite por rol, env `AI_QUOTA_*`, mismo doc/cálculo que
+  el backend; `admin` = ilimitado) → el bot responde con la fecha de
+  reinicio y cierra el item `completed` **sin retry**.
+- Los **comandos / consultas / regex** (saldo, ayuda, resumen,
+  confirmaciones, gasto parseado por regex) **no** pasan por el chequeo
+  → siguen funcionando aunque el usuario esté sin cuota.
+- `checkQuota` es **best-effort**: si falla la lectura de rol/rollup,
+  **no** bloquea (el backend es el guard duro; acá es feedback temprano
+  + ahorro de costo). Firestore rules/índices se gestionan en `gastos`.
+
+---
+
 ## Cola y reintentos (`whatsapp_queue`)
 
 | Estado       | Cuándo                                                        |
