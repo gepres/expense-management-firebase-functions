@@ -283,7 +283,8 @@ async function processImageMessage(
     const anthropicService = new AnthropicService();
     const extractionResult = await anthropicService.extractReceiptData(
       mediaResult.base64,
-      mediaResult.mimeType
+      mediaResult.mimeType,
+      { userId: user.id }
     );
 
     if (!extractionResult) {
@@ -394,7 +395,8 @@ async function processAudioMessage(
     const audioBuffer = Buffer.from(mediaResult.base64, "base64");
     const transcription = await transcriptionService.transcribeAudio(
       audioBuffer,
-      mediaResult.mimeType
+      mediaResult.mimeType,
+      { userId: user.id }
     );
 
     if (!transcription) {
@@ -416,7 +418,10 @@ async function processAudioMessage(
 
     // Parse expense from transcription using Anthropic
     const anthropicService = new AnthropicService();
-    const parseResult = await anthropicService.parseExpenseMessage(transcription);
+    const parseResult = await anthropicService.parseExpenseMessage(
+      transcription,
+      { userId: user.id }
+    );
 
     if (!parseResult.success || !parseResult.expenseData) {
       await twilioService.sendMessage(
@@ -572,7 +577,9 @@ async function processTextMessage(
     // Fallback to Anthropic for complex messages
     logger.info("Using Anthropic to parse message:", message);
     const anthropicService = new AnthropicService();
-    const parseResult = await anthropicService.parseExpenseMessage(message);
+    const parseResult = await anthropicService.parseExpenseMessage(message, {
+      userId: user.id,
+    });
 
     if (!parseResult.success || !parseResult.expenseData) {
       logger.warn("Failed to parse expense:", parseResult.error);
@@ -721,7 +728,8 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
     methods.forEach((mth) => nameToId.set(mth.nombre, mth.id));
     const picked = await anthropicService.disambiguatePaymentMethod(
       args.paymentHint,
-      Array.from(nameToId.keys())
+      Array.from(nameToId.keys()),
+      { userId: user.id }
     );
     if (picked) {
       metodoPago = nameToId.get(picked) ?? picked;
@@ -748,7 +756,8 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
       // § G.1: el regex no resolvió pero hay pista temporal → LLM.
       const llmDate = await anthropicService.parseRelativeDate(
         matchText,
-        messageDate.toISOString().slice(0, 10)
+        messageDate.toISOString().slice(0, 10),
+        { userId: user.id }
       );
       if (llmDate) {
         fechaISO = new Date(`${llmDate}T12:00:00`).toISOString();

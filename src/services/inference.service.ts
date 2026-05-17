@@ -205,7 +205,8 @@ export class InferenceService {
         try {
           const picked = await new AnthropicService().classifyAgainstTaxonomy(
             description,
-            candidates
+            candidates,
+            { userId }
           );
           const mapped = picked ?
             categoryIdForTerm(picked, categories) :

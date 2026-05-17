@@ -5,6 +5,7 @@ import * as path from "path";
 import * as os from "os";
 import { audioExtensionFor } from "../utils/media-types";
 import { transcribeModel } from "../config/models";
+import { recordUsage, UsageContext } from "./usage.service";
 
 export class TranscriptionService {
   private client: OpenAI;
@@ -17,7 +18,11 @@ export class TranscriptionService {
     this.client = new OpenAI({ apiKey });
   }
 
-  async transcribeAudio(audioBuffer: Buffer, mimeType: string): Promise<string | null> {
+  async transcribeAudio(
+    audioBuffer: Buffer,
+    mimeType: string,
+    usageCtx?: Partial<UsageContext>
+  ): Promise<string | null> {
     let tempFilePath: string | null = null;
 
     try {
@@ -40,6 +45,23 @@ export class TranscriptionService {
       });
 
       logger.info("Transcription successful:", transcription.text);
+
+      // La API no devuelve duración; estimación gruesa por tamaño del
+      // buffer (audio WhatsApp ≈ Opus ~24 kbps ≈ 3000 bytes/s). Solo para
+      // estimar costo (best-effort), clamp a 10 min.
+      const estSeconds = Math.min(
+        600,
+        Math.max(1, Math.round(audioBuffer.length / 3000))
+      );
+      void recordUsage({
+        provider: "openai",
+        model: transcribeModel(),
+        units: estSeconds,
+        unitType: "audio_seconds",
+        userId: usageCtx?.userId ?? null,
+        scope: usageCtx?.scope ?? "user",
+        feature: usageCtx?.feature ?? "whatsapp_voice_transcription",
+      });
 
       return transcription.text;
     } catch (error) {

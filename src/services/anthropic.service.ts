@@ -1,7 +1,34 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { AnthropicResponse, ExpenseData, ReceiptExtractionResult } from "../types";
 import { modelParams } from "../config/models";
+import { recordUsage, UsageContext } from "./usage.service";
 import * as logger from "firebase-functions/logger";
+
+/** Forma mínima del `usage` que devuelve la API de mensajes. */
+interface AnthropicUsageLike {
+  input_tokens?: number;
+  output_tokens?: number;
+}
+
+// Registra (best-effort) el consumo de una llamada. Por decisión de
+// producto, todo lo del bot de WhatsApp es consumo de USUARIO (scope
+// "user"); el call site provee el `userId`.
+function track(
+  model: string,
+  usage: AnthropicUsageLike | undefined,
+  usageCtx: Partial<UsageContext> | undefined,
+  feature: string
+): void {
+  void recordUsage({
+    provider: "anthropic",
+    model,
+    inputTokens: usage?.input_tokens ?? 0,
+    outputTokens: usage?.output_tokens ?? 0,
+    userId: usageCtx?.userId ?? null,
+    scope: usageCtx?.scope ?? "user",
+    feature: usageCtx?.feature ?? feature,
+  });
+}
 
 export class AnthropicService {
   private client: Anthropic;
@@ -16,7 +43,8 @@ export class AnthropicService {
 
   async extractReceiptData(
     base64Image: string,
-    mimeType: string
+    mimeType: string,
+    usageCtx?: Partial<UsageContext>
   ): Promise<ReceiptExtractionResult | null> {
     try {
       const prompt = "Analiza esta imagen de un comprobante, recibo o " +
@@ -53,10 +81,11 @@ export class AnthropicService {
         "- Para el monto, solo devuelve el número sin símbolos: '25.50' no 'S/ 25.50'\n" +
         "- NO incluyas texto adicional fuera del JSON, SOLO el objeto JSON";
 
+      const mp = modelParams("primary");
       const response = await this.client.messages.create({
         // Comprobante (vision) → tier "primary". modelParams resuelve modelo
         // + thinking/effort desde env (src/config/models.ts).
-        ...modelParams("primary"),
+        ...mp,
         max_tokens: 1024,
         messages: [{
           role: "user",
@@ -76,6 +105,8 @@ export class AnthropicService {
           ],
         }],
       });
+
+      track(mp.model, response.usage, usageCtx, "whatsapp_receipt_ocr");
 
       const content = response.content[0];
       if (content.type !== "text") {
@@ -133,7 +164,10 @@ export class AnthropicService {
     }
   }
 
-  async parseExpenseMessage(message: string): Promise<AnthropicResponse> {
+  async parseExpenseMessage(
+    message: string,
+    usageCtx?: Partial<UsageContext>
+  ): Promise<AnthropicResponse> {
     try {
       const prompt = `Analiza el siguiente mensaje de WhatsApp y extrae información de un gasto.
 
@@ -161,15 +195,18 @@ Ejemplos:
 
 NO incluyas texto adicional, SOLO el objeto JSON.`;
 
+      const mp = modelParams("primary");
       const response = await this.client.messages.create({
         // Parse principal de texto → tier "primary".
-        ...modelParams("primary"),
+        ...mp,
         max_tokens: 1024,
         messages: [{
           role: "user",
           content: prompt,
         }],
       });
+
+      track(mp.model, response.usage, usageCtx, "whatsapp_expense_parse");
 
       const content = response.content[0];
       if (content.type !== "text") {
@@ -254,7 +291,8 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
   // (ROADMAP § B.4 / § G.1). Devuelve YYYY-MM-DD o null.
   async parseRelativeDate(
     text: string,
-    referenceDateISO: string
+    referenceDateISO: string,
+    usageCtx?: Partial<UsageContext>
   ): Promise<string | null> {
     try {
       const prompt =
@@ -270,11 +308,14 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
       // Helper acotado (fallback de regex, devuelve un valor de lista) →
       // tier "helper". modelParams omite output_config.effort si el modelo
       // resuelto no lo soporta (p.ej. Haiku → 400). Ver src/config/models.ts.
+      const mp = modelParams("helper");
       const response = await this.client.messages.create({
-        ...modelParams("helper"),
+        ...mp,
         max_tokens: 128,
         messages: [{ role: "user", content: prompt }],
       });
+
+      track(mp.model, response.usage, usageCtx, "whatsapp_date_parse");
 
       const content = response.content[0];
       if (content.type !== "text") return null;
@@ -294,7 +335,8 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
   // lista o null si ninguno corresponde con confianza.
   async classifyAgainstTaxonomy(
     description: string,
-    candidates: string[]
+    candidates: string[],
+    usageCtx?: Partial<UsageContext>
   ): Promise<string | null> {
     if (candidates.length === 0) return null;
     try {
@@ -307,11 +349,14 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
         "confianza razonable. SOLO el JSON.";
 
       // Helper acotado → tier "helper".
+      const mp = modelParams("helper");
       const response = await this.client.messages.create({
-        ...modelParams("helper"),
+        ...mp,
         max_tokens: 128,
         messages: [{ role: "user", content: prompt }],
       });
+
+      track(mp.model, response.usage, usageCtx, "whatsapp_category_classify");
 
       const content = response.content[0];
       if (content.type !== "text") return null;
@@ -330,7 +375,8 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
   // (ROADMAP § G.1). Devuelve un candidato exacto de la lista o null.
   async disambiguatePaymentMethod(
     hint: string,
-    candidates: string[]
+    candidates: string[],
+    usageCtx?: Partial<UsageContext>
   ): Promise<string | null> {
     if (candidates.length === 0) return null;
     try {
@@ -343,11 +389,19 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
         "confianza. SOLO el JSON.";
 
       // Helper acotado → tier "helper".
+      const mp = modelParams("helper");
       const response = await this.client.messages.create({
-        ...modelParams("helper"),
+        ...mp,
         max_tokens: 128,
         messages: [{ role: "user", content: prompt }],
       });
+
+      track(
+        mp.model,
+        response.usage,
+        usageCtx,
+        "whatsapp_payment_disambiguation"
+      );
 
       const content = response.content[0];
       if (content.type !== "text") return null;

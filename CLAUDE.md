@@ -28,6 +28,7 @@ src/services/
   onboarding.service.ts               ← marca primer contacto (idempotente) para el onboarding auto
   pending-action.service.ts           ← estado de conversación corto (confirmar sí/no), TTL, users/{uid}/sessions/pending_action
   user.service.ts                     ← lookup por whatsappPhone
+  usage.service.ts                    ← recordUsage() consumo IA (Fase 1, best-effort, repo:"functions")
   twilio.service.ts                   ← sendMessage
 src/config/
   models.ts                           ← resuelve modelo + thinking/effort por tier (modelParams/transcribeModel)
@@ -69,6 +70,7 @@ Punto de entrada lógico: `processWhatsAppQueue` en `src/index.ts`. Toda registr
 - **Functions v2** ya migrado. Trigger: `onDocumentCreated("whatsapp_queue/{queueId}", ...)`; `event.data` es el snapshot (guardar `if (!snap) return`), `event.params.queueId`.
 - **Secrets via `defineSecret`** (`firebase-functions/params`), declarados en `index.ts` y bindeados a `processWhatsAppQueue` vía `secrets: [...]`. En runtime quedan como `process.env.<NAME>` — los services solo leen `process.env.*` (ya no hay `functions.config()`). Setear con `firebase functions:secrets:set <NAME>`.
 - **Logging:** `import * as logger from "firebase-functions/logger"` (no `functions.logger`).
+- **Consumo IA (Fase 1, tracking):** todas las llamadas IA del bot registran consumo vía `recordUsage()` (`src/services/usage.service.ts`), mismo esquema Firestore que el backend (`aiUsageEvents` + `aiUsageMonthly/{uid}_{YYYY-MM}` top-level + `aiUsageAppMonthly`, `repo:"functions"`). Por decisión de producto **todo lo del bot es `scope:"user"`** (el call site pasa `{ userId: user.id }`). Es **best-effort**: nunca lanza, jamás rompe el procesamiento. Sin enforcement aún (Fase 2). Las tarifas se estiman por env (`AI_PRICE_*`); Whisper estima segundos por tamaño de buffer (heurística). Escribe vía Admin SDK (no depende de rules).
 
 ## 5. Antes de cambiar código
 
