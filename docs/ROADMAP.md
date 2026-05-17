@@ -2,7 +2,28 @@
 
 Hoja de ruta consolidada para la siguiente fase de desarrollo. Reemplaza las secciones de roadmap dispersas en `README.md`, `CLAUDE.md` y `ARCHITECTURE.md`.
 
-> Fecha base: 2026-05-14 · Versión actual: 2.1.0
+> Fecha base del registro: 2026-05-14 · **Estado vigente: ver addendum abajo (2026-05-16, v2.6.0)**
+
+---
+
+## Estado al 2026-05-16 (addendum — fuente de verdad del estado actual)
+
+> Lo que sigue después de esta sección es el **registro histórico de decisiones del 2026-05-14** (se conserva por el "por qué"). Para saber **qué está vigente hoy**, leer este addendum: algunas decisiones de entonces se **revirtieron**.
+
+### ⚠️ Revertido
+
+- **§ F "Wallet con saldo — diseño detallado" (completo) y § E.5/E.6:** el bot **ya NO** gestiona saldo ni ledger. Decisión posterior **"Opción A"** (commit `55b1699`): el web app/backend es dueño único del saldo. `MovementService` y `users/{uid}/{accounts,movements}` legacy **eliminados**. `saveExpense` solo escribe el `expense` (NO transacción con movement/saldo). `resolveActiveAccount` usa la colección **canónica top-level `accounts`**. Comandos `saldo`/`saldos` = lectura canónica; **`ingreso`/`transferir`/`movimientos` retirados** (derivan al web app). Todo § F queda **obsoleto**.
+
+### ✅ Hecho desde 2026-05-14
+
+- § B.1–B.6 (cuenta activa, moneda heredada, validaciones monto/método/fecha, flujo de clasificación, `sin_clasificar`), § G (IA en decisiones + `learning_log`), § C.1/C.2 (idempotencia + auditoría).
+- § A.2 `getExpenseSummary` por mes **arreglado** (el `[ ]` de abajo está obsoleto).
+- § A.3 completo: Functions v2 + `defineSecret`, webhook Twilio absorbido + validación de firma, tests `node:test`.
+- **Nuevo (no estaba en el roadmap):** ayuda menú+temas, onboarding automático, consultas (`cuánto gasté hoy`, `gastos de hoy`, `mis categorías/cuentas/métodos`), **edición del último gasto** (borrar/corregir con confirmación — § H lo daba como "solo dashboard", ya no), Node 22 + `firebase-functions@^6.6.0`, CI (GitHub Actions), alerta `onWhatsAppQueueFailed` (policy versionada en `ops/`).
+
+### ⏳ Pendiente real
+
+Backlog priorizado y vigente en [`README.md`](../README.md#estado-y-próximas-mejoras) (aplicar alert policy, tests de integración, cache categorías/payment_methods, rate-limit/costo, UX multi-gasto/NL/presupuestos, mantenimiento v7/admin13/JDK21).
 
 ---
 
@@ -271,6 +292,8 @@ Bloques 1–5 forman el **piso de la fase** (cuentas + saldo funcionando). 6–1
 
 ## F. Wallet con saldo — diseño detallado
 
+> ⛔ **OBSOLETO / REVERTIDO (2026-05-16).** Todo este § F fue revertido por la decisión "Opción A": el bot ya no gestiona saldo ni ledger. Se conserva solo como registro histórico. Ver el addendum al inicio del documento.
+
 Decidido § E.5 y § E.6: cada cuenta tiene saldo **sincronizado con la base de datos**. La fuente de verdad son los movimientos (ledger append-only); `accounts.saldo` es un caché denormalizado actualizado en la misma transacción.
 
 ### F.1 Colección `movements` (ledger)
@@ -451,4 +474,4 @@ Paso 4 de § B.5: antes de caer en "sin clasificar", consultar `learning_log`.
 
 ---
 
-**Última actualización:** 2026-05-14
+**Registro de decisiones:** 2026-05-14 · **Addendum de estado:** 2026-05-16 (ver inicio)

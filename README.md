@@ -19,7 +19,7 @@ Cada gasto se vincula a una **cuenta canónica** (el saldo y el ledger los gesti
 - [Uso desde WhatsApp](#uso-desde-whatsapp)
 - [Comandos NPM](#comandos-npm)
 - [Documentación Extendida](#documentación-extendida)
-- [Próximas Mejoras](#próximas-mejoras)
+- [Estado y Próximas Mejoras](#estado-y-próximas-mejoras)
 
 ---
 
@@ -412,21 +412,24 @@ Ejemplos detallados de I/O en [`docs/EXAMPLES.md`](docs/EXAMPLES.md).
 
 ---
 
-## Próximas Mejoras
+## Estado y Próximas Mejoras
 
-Roadmap completo y fuente única: [`docs/ROADMAP.md`](docs/ROADMAP.md). Todas las decisiones de alcance cerradas al 2026-05-14.
+Registro de decisiones e historia: [`docs/ROADMAP.md`](docs/ROADMAP.md) (ver el bloque **"Estado al 2026-05-16"** al inicio).
 
-**Fase actual — Validaciones + clasificación inteligente:**
-- Concepto de `accounts` con **saldo sincronizado** (wallet + ledger en `movements`, transacciones Firestore atómicas).
-- Cambio de cuenta por comando WhatsApp o desde configuración del usuario.
-- Moneda heredada de la cuenta; validación dura de monto, método de pago y fecha (regex + LLM).
-- Nuevo flujo de clasificación: `suggestions_ideas` → subcategoría → categoría → historial → `sin_clasificar`.
-- **Historial de aprendizaje** por usuario (`learning_log`) que retroalimenta futuras decisiones.
-- Comandos nuevos: `saldo`, `ingreso`, `transferir`, `usar cuenta <nombre>`, `pendientes`, `mi historial`.
+**Ya hecho (en `main`):**
+- Cuenta **canónica** (top-level `accounts`, dueño: web app). El bot **NO** gestiona saldo/ledger (decisión "Opción A"): `saveExpense` solo escribe el expense; `saldo`/`saldos` son lectura canónica; `ingreso`/`transferir`/`movimientos` derivan al web app.
+- Moneda heredada de la cuenta; validación dura de monto/método/fecha (regex + LLM); flujo de clasificación `suggestions_ideas` → subcategoría → categoría → historial → LLM acotado → `sin_clasificar`; `learning_log` que retroalimenta.
+- Ayuda menú + temas, onboarding automático, consultas (`cuánto gasté hoy`, `gastos de hoy`, `mis categorías/cuentas/métodos`), corregir/borrar último gasto con confirmación (estado de conversación).
+- Functions v2 + `defineSecret`, webhook Twilio absorbido + validación de firma, `getExpenseSummary` por mes arreglado, Node 22 + `firebase-functions@^6.6.0`, CI (GitHub Actions: test + smoke), alerta `onWhatsAppQueueFailed` (policy versionada en [`ops/`](ops/)).
 
-**Mantenimiento e infraestructura:** Migración a Functions v2 + `defineSecret`, fix `getExpenseSummary` por mes, cache por invocación de categorías/payment methods, tests con `firebase-functions-test`, absorber webhook de Twilio + validación de firma.
+**Pendiente (backlog priorizado):**
+- Aplicar la alert policy (`ops/README.md`, 1 paso `gcloud`).
+- Tests de integración del pipeline (`firebase-functions-test`) + cache por invocación de categorías/payment_methods.
+- Rate-limit / tope de costo por usuario (Anthropic/OpenAI).
+- UX: multi-gasto en un mensaje, ingreso en lenguaje natural, presupuestos/alertas (leer `presupuestos` del web app), botones nativos WhatsApp, nudges proactivos (ventana 24 h / plantillas Meta).
+- Mantenimiento diferido: `firebase-functions` v7 (major), `firebase-admin` v13, JDK ≥ 21.
 
-**Producto (largo plazo):** Dashboard web con saldo y movimientos, export CSV/Excel, alertas de saldo bajo y presupuestos.
+**Producto (largo plazo, fuera de este repo):** Dashboard web, export Excel.
 
 ---
 
