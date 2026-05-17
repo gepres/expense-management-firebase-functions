@@ -59,6 +59,7 @@ Tres canales de entrada (texto / imagen / audio), un único pipeline de inferenc
 | Mensajería      | Twilio WhatsApp Business API                   |
 | NLU (texto/img) | Anthropic Claude — Sonnet 4.6 (vision/parse) + Haiku 4.5 (helpers), por env |
 | Transcripción   | OpenAI (`gpt-4o-mini-transcribe`, por env)     |
+| IA compartida   | `@gastos/expense-ai` (vendoreada) — prompts, modelos, parsers, ranking de clasificación y schema `learning_log`; single source of truth con el web app. Editar SOLO el paquete → `npm run sync` → `npm i` |
 | Lint            | ESLint + Google config                         |
 
 ---
