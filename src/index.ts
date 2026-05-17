@@ -1,3 +1,4 @@
+import "./utils/timezone"; // PRIMERO: fija TZ=America/Lima (ver módulo).
 import {
   onDocumentCreated,
   onDocumentUpdated,

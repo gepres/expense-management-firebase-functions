@@ -240,6 +240,8 @@ Cada mensaje cabe en un solo WhatsApp (~1600 chars, verificado por tests).
 
 Periodos (`MessageParser.resolveQueryPeriod`, lógica pura testeada): `hoy`, `ayer`, `esta semana` (lun–lun), `este mes`, `mes pasado`, nombre de mes (`mayo` → ese mes; si es futuro, año anterior). Sin periodo reconocible → mes en curso. Backed by `ExpenseService.getSummaryBetween` / `getExpensesBetween` (query por `fecha` en rango `[start, end)`).
 
+> **Zona horaria:** los límites de día/mes se calculan en **hora Perú** (`TZ=America/Lima`, ver `.env` + `src/utils/timezone.ts`). Cloud Run corre en UTC; sin esto, consultar después de las 19:00 (Perú) devolvía el día siguiente y excluía los gastos del día peruano. `fecha` se guarda como `Timestamp` absoluto (correcto); solo el cálculo de la ventana dependía de la TZ.
+
 ### Cuentas y wallet
 | Comando | Acción |
 |---------|--------|
