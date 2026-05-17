@@ -4,13 +4,15 @@ Para el camino corto ver [`QUICKSTART.md`](QUICKSTART.md). Este documento cubre 
 
 ## Requisitos Previos
 
-- Node.js 20+
+- **Node.js 22** (runtime de las funciones; `engines.node` = 22)
+- **JDK ≥ 21** (solo para el emulador de Firestore / `npm run smoke`)
 - npm
 - Firebase CLI: `npm install -g firebase-tools`
 - Cuenta Firebase
 - Cuenta Twilio con WhatsApp habilitado
 - API Key de Anthropic Claude
 - API Key de OpenAI (procesamiento de audio)
+- `gcloud` autenticado (solo para aplicar la alert policy, ver §9.2)
 
 ---
 
@@ -52,7 +54,7 @@ Console → Firestore Database → Create database → Production mode → regi�
 
 1. https://console.anthropic.com/
 2. Crea una API Key (prefijo `sk-ant-`).
-3. Verifica que tu plan da acceso a `claude-sonnet-4-20250514` (modelo usado para texto y visión).
+3. Modelos por env (no-secretos, `src/config/models.ts`): `ANTHROPIC_MODEL_PRIMARY` (default `claude-sonnet-4-6`, texto+visión) y `ANTHROPIC_MODEL_HELPER` (default `claude-haiku-4-5`, fallbacks). Verifica que tu plan da acceso a esos modelos.
 
 ---
 
@@ -62,7 +64,7 @@ Console → Firestore Database → Create database → Production mode → regi�
 
 1. https://platform.openai.com/api-keys
 2. Crea una API Key.
-3. El modelo usado es `whisper-1` con `language: "es"`.
+3. Modelo por env: `OPENAI_MODEL_TRANSCRIBE` (default `gpt-4o-mini-transcribe`, `language: "es"`), resuelto en `src/config/models.ts`.
 
 ---
 
@@ -75,25 +77,36 @@ npm install
 
 ## Paso 6 — Variables de entorno
 
-### Desarrollo local
-```bash
-cp .env.example .env
-```
+Hay **dos clases** y NO se mezclan. Meter un secreto en `.env` rompe el deploy v2 (`"Secret environment variable overlaps non secret environment variable"`).
 
-Contenido:
+### 6.1 No-secretas → `.env` (versionado config, bundled al deploy)
+
+`.env` contiene **solo** variables no sensibles. Se empaquetan en el deploy y Cloud Run las setea como env del runtime.
+
 ```env
-TWILIO_ACCOUNT_SID=ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-TWILIO_AUTH_TOKEN=tu_token
-TWILIO_WHATSAPP_NUMBER=whatsapp:+14155238886
-ANTHROPIC_API_KEY=sk-ant-xxxxx
-OPENAI_API_KEY=sk-xxxxx
+# Requerida en prod: URL EXACTA configurada en Twilio (validación de firma).
+TWILIO_WEBHOOK_URL=https://us-central1-<proyecto>.cloudfunctions.net/twilioWebhook
+
+# Requerida: zona horaria. Cloud Run corre en UTC; sin esto "hoy/ayer/
+# semana/mes" se calculan en UTC y tras las 19:00 Perú "hoy" salta de día
+# y excluye los gastos del día peruano. Perú = UTC-5 fijo (sin DST).
+TZ=America/Lima
+
+# Opcional: deep-link al web app en los mensajes guiados (dead-end sin
+# cuenta canónica + ingreso/transferir/movimientos retirados).
+WEBAPP_URL=https://expense-app-gepres.web.app/cuentas
+
+# Opcionales: modelos por tier (si se omiten, defaults de models.ts).
+# ANTHROPIC_MODEL_PRIMARY=claude-sonnet-4-6
+# ANTHROPIC_MODEL_HELPER=claude-haiku-4-5
+# OPENAI_MODEL_TRANSCRIBE=gpt-4o-mini-transcribe
 ```
 
-> **Emulador + secrets v2.** `.env` no basta para el emulador: con `defineSecret` Firebase sondea Google Cloud Secret Manager y lanza `404`/warning si los secrets no existen ahí. Crea **`.secret.local`** en la raíz copiando `.env` (`cp .env .secret.local`); el emulador lo usa como override local. Está en `.gitignore` — nunca se versiona. Si cambias una clave, edítalo y reinicia el emulador.
+> `.env` está en `.gitignore` (no se versiona) pero **sí se bundlea al deploy** — un cambio acá requiere `npm run deploy` para tomar efecto. `TZ` también está reforzada en código (`src/utils/timezone.ts`, importado primero en `index.ts`).
 
-### Producción (Secrets v2)
+### 6.2 Secretas → Secret Manager (NUNCA en `.env`)
 
-Las credenciales son **secrets v2** (`defineSecret`), bindeados a `processWhatsAppQueue`. Setearlos uno por uno (pide el valor por stdin):
+Las 5 credenciales son **secrets v2** (`defineSecret` en `index.ts`, bindeados a las funciones). En runtime quedan como `process.env.<NAME>`.
 
 ```bash
 firebase functions:secrets:set TWILIO_ACCOUNT_SID
@@ -105,7 +118,11 @@ firebase functions:secrets:set OPENAI_API_KEY
 firebase functions:secrets:access ANTHROPIC_API_KEY   # verificar
 ```
 
-> En runtime los secrets quedan expuestos como `process.env.<NAME>`, que es lo que leen los services. `functions.config()` (v1) ya no se usa.
+`functions.config()` (v1) ya no se usa.
+
+### 6.3 Emulador local → `.secret.local`
+
+Con `defineSecret`, el emulador sondea Secret Manager y warnea `404` si los secrets no están. Override local: crear **`.secret.local`** en la raíz con las **5 claves** (formato `CLAVE=valor`). Está en `.gitignore`. Para `npm run smoke` los valores Twilio pueden ser dummy (el SID debe empezar con `AC`); el envío falla en silencio y el flujo igual cierra. Las no-secretas del `.env` (incl. `TZ`) el emulador las toma del `.env`.
 
 ---
 
@@ -157,14 +174,18 @@ npm run deploy
 firebase deploy --only functions
 ```
 
-Salida esperada:
+El `predeploy` (`firebase.json`) corre **`lint` + `build` + `test`** como gate: si algo falla, aborta antes de subir. No hace falta `npm run build` aparte.
+
+Salida esperada (**5 funciones**, runtime **Node.js 22 (2nd Gen)**):
 ```
-functions[processWhatsAppQueue(us-central1)] Successful create.
-functions[twilioWebhook(us-central1)] Successful create.
-functions[healthCheck(us-central1)] Successful create.
-Function URL (twilioWebhook): https://us-central1-<proyecto>.cloudfunctions.net/twilioWebhook
-Function URL (healthCheck): https://us-central1-<proyecto>.cloudfunctions.net/healthCheck
+functions[processWhatsAppQueue(us-central1)] Successful update operation.
+functions[twilioWebhook(us-central1)] Successful update operation.
+functions[exportExpenses(us-central1)] Successful update operation.
+functions[healthCheck(us-central1)] Successful update operation.
+functions[onWhatsAppQueueFailed(us-central1)] Successful update operation.
 ```
+
+> El warning `package.json indicates an outdated version of firebase-functions` es **esperado**: estamos en `^6.6.0` a propósito (v7 es major no migrado). No bloquea.
 
 ## Paso 9.1 — Apuntar Twilio al webhook
 
@@ -180,6 +201,20 @@ https://us-central1-<proyecto>.cloudfunctions.net/twilioWebhook
 
 ---
 
+## Paso 9.2 — Alerta de fallos (post-deploy, una vez)
+
+`onWhatsAppQueueFailed` (función desplegada) emite un log estructurado estable cada vez que un mensaje agota los 3 reintentos (`whatsapp_queue → status: "failed"`). **El deploy NO crea la alerta** — es un recurso de Cloud Monitoring aparte.
+
+Aplicar una vez con `gcloud` (autenticado, rol `roles/monitoring.editor`):
+
+1. Crear/identificar un canal de notificación (email).
+2. Editar `ops/alert-policy.json` → reemplazar `NOTIFICATION_CHANNEL_ID`.
+3. `gcloud alpha monitoring policies create --project=expense-app-gepres --policy-from-file=ops/alert-policy.json`
+
+Pasos exactos y filtro de la policy: **[`ops/README.md`](../ops/README.md)** (la policy está versionada en `ops/alert-policy.json`). Sin esto el bot funciona igual, pero un fallo del pipeline no notifica.
+
+---
+
 ## Paso 10 — Índices de Firestore
 
 > ⚠️ **Firestore rules/indexes NO se gestionan en este repo.** El proyecto Firebase `expense-app-gepres` es compartido con el web app `D:\PROYECTOS\gepres\gastos`, **dueño único** de `firestore.rules` y `firestore.indexes.json`. Este repo ya no tiene esos archivos ni bloque `firestore` en `firebase.json`. Los índices que el bot necesita **ya están fusionados** en `gastos/firestore.indexes.json`. Para deployarlos/cambiarlos: `cd D:\PROYECTOS\gepres\gastos && firebase deploy --only firestore`. (Razón: deployar las rules deny-all de este repo machacó las del web app y rompió el login — ver §11.)
@@ -188,26 +223,18 @@ https://us-central1-<proyecto>.cloudfunctions.net/twilioWebhook
 
 | Colección       | Campos                                      | Usado por                  |
 |-----------------|---------------------------------------------|----------------------------|
-| `movements`     | `accountId` ASC, `fecha` DESC               | `getMovementsByAccount`    |
-| `movements`     | `accountId` ASC, `fecha` ASC                | `getSaldoAtDate`           |
 | `learning_log`  | `type` ASC, `tokens` ARRAY                  | `queryRelevant`            |
-| `expenses`      | `userId` ASC, `createdAt` DESC              | `getExpensesByUserId`      |
-| `expenses`      | `userId` ASC, `fecha` ASC                   | `getExpenseSummary` (mes)  |
+| `expenses`      | `userId` ASC, `createdAt` DESC              | `getExpensesByUserId`, `getLastExpense` |
+| `expenses`      | `userId` ASC, `fecha` DESC                  | `getExpensesBetween`/`getSummaryBetween`/`getExpenseSummary` (consultas y por mes) |
 | `expenses`      | `userId` ASC, `needsClassification` ASC     | `getPending`               |
 | `expenses`      | `userId` ASC, `needsReview` ASC             | `getPending`               |
 | `expenses`      | `userId` ASC, `amountFlagged` ASC           | `getPending` (monto atípico) |
 
-Sin estos índices, `pendientes`/`movimientos`/resumen por mes fallan en runtime. Si aparece un error de índice, Firebase entrega un enlace directo para crearlo.
+> Los índices de `movements`/`accountId` ya **no** los usa el bot (decisión "Opción A": el bot dejó de gestionar el ledger; ver `docs/ROADMAP.md` addendum). `expenses userId+fecha DESC` ya está en el archivo canónico de `gastos` — verificado. Sin estos índices, `pendientes`/consultas/resumen por mes fallan en runtime con un enlace directo para crearlos.
 
-## Paso 10.1 — Migración de cuentas (una vez)
+## Paso 10.1 — Migración de cuentas
 
-Antes del primer uso productivo, correr el backfill idempotente:
-
-```bash
-GOOGLE_APPLICATION_CREDENTIALS=/ruta/serviceAccount.json npm run backfill:accounts
-```
-
-Crea la cuenta `Principal` (PEN, saldo 0) para cada usuario y asigna `accountId` a los `expenses` históricos. **No** reproduce movimientos: el ledger arranca en cero; el usuario fija su saldo real con `ingreso`/`ajustar`. Correrlo dos veces es seguro.
+> ⚠️ **Obsoleto (Opción A).** `npm run backfill:accounts` creaba la cuenta legacy `users/{uid}/accounts` y un ledger propio del bot. Tras el desacople el bot usa la colección **canónica top-level `accounts`** (dueño: web app) y ya no gestiona saldo/ledger. Este backfill **no es necesario** para nuevas instalaciones; el usuario debe tener una cuenta canónica creada desde el web app (si no, el bot responde con un mensaje guiado a `WEBAPP_URL`). Se conserva el script por compatibilidad histórica.
 
 ---
 
@@ -234,13 +261,15 @@ Si faltan estas subcolecciones, los defaults son: categoría `"otros"`, método 
 ## Comandos útiles
 
 ```bash
-firebase functions:config:get
-firebase functions:config:unset twilio.account_sid
-npm run logs
+firebase functions:secrets:access ANTHROPIC_API_KEY   # ver un secret
+firebase functions:list                                # 5 funciones
+npm run logs                                            # tail prod
+npm run smoke                                           # E2E emulador
 npm run lint
 npm run build:watch
-firebase functions:list
 ```
+
+> `firebase functions:config:*` era v1 — **no aplica** (este repo usa `defineSecret` + `.env`).
 
 ---
 
@@ -274,6 +303,15 @@ Firebase Functions devuelve el link directo en el error. Click → crear → esp
 ### Usuario no encontrado
 - Verifica que `users/{uid}.whatsappPhone` coincida con el número entrante normalizado (`+51XXXXXXXXX`, sin `whatsapp:`).
 - El método de búsqueda está en `user.service.ts:findByWhatsAppPhone`.
+
+### `cuánto gasté hoy` / `gastos de hoy` vuelve vacío aunque hay gastos
+Zona horaria. Confirma que `TZ=America/Lima` está en `.env` y que se desplegó (`firebase deploy` loguea `Loaded environment variables from .env`). Sin `TZ`, Cloud Run calcula "hoy" en UTC y tras las 19:00 Perú devuelve el día siguiente. Verificable: `TZ=UTC node -e "..."` vs `TZ=America/Lima` sobre `resolveQueryPeriod('hoy')`. Requiere **redeploy** para tomar efecto (la `.env` se bundlea al deploy).
+
+### Usuario sin cuenta / `ingreso`/`transferir` "deriva a la app"
+Esperado tras "Opción A": el bot no gestiona saldo/ledger. El usuario crea su cuenta en el web app (`WEBAPP_URL` → `/cuentas`); `ingreso`/`transferir`/`movimientos` se hacen en la app. `saldo`/`saldos` son lectura de la cuenta canónica.
+
+### No llega alerta cuando un mensaje falla
+La función `onWhatsAppQueueFailed` emite el log, pero la **alert policy** no se crea con el deploy: aplicar `ops/README.md` (§9.2).
 
 ---
 

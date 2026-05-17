@@ -4,7 +4,7 @@ Puesta en marcha en ~10 minutos. Para configuración detallada ver [`SETUP.md`](
 
 ## Prerrequisitos
 
-- [ ] Node.js 20+
+- [ ] Node.js 22 (runtime de las funciones)
 - [ ] Firebase CLI: `npm install -g firebase-tools`
 - [ ] Proyecto Firebase con Firestore habilitado
 - [ ] Cuenta Twilio con WhatsApp Sandbox activo
@@ -26,13 +26,16 @@ firebase login
 
 ### 3. Variables de entorno
 
-**Opción A — Local (`.env`):**
-```bash
-cp .env.example .env
-# Editar con tus credenciales reales
+Dos clases (NO se mezclan — secreto en `.env` rompe el deploy v2). Detalle: [`SETUP.md` §6](SETUP.md#paso-6--variables-de-entorno).
+
+**No-secretas → `.env`** (versionado config, bundled al deploy):
+```env
+TWILIO_WEBHOOK_URL=https://us-central1-<proyecto>.cloudfunctions.net/twilioWebhook
+TZ=America/Lima
+WEBAPP_URL=https://expense-app-gepres.web.app/cuentas
 ```
 
-**Opción B — Producción (Secrets v2):**
+**Secretas → Secret Manager** (las 5 credenciales, NUNCA en `.env`):
 ```bash
 firebase functions:secrets:set TWILIO_ACCOUNT_SID
 firebase functions:secrets:set TWILIO_AUTH_TOKEN
@@ -40,11 +43,11 @@ firebase functions:secrets:set TWILIO_WHATSAPP_NUMBER
 firebase functions:secrets:set ANTHROPIC_API_KEY
 firebase functions:secrets:set OPENAI_API_KEY
 ```
+Emulador local: `.secret.local` con esas 5 claves (ver `SETUP.md` §6.3).
 
-### 4. Compilar y desplegar
+### 4. Desplegar
 ```bash
-npm run build
-npm run deploy
+npm run deploy   # el predeploy corre lint+build+test (no hace falta build aparte)
 ```
 
 ## Probar el deploy
@@ -106,10 +109,10 @@ Verificar:
 
 ```bash
 npm run serve          # Emuladores Firebase
+npm run smoke          # E2E en emulador (one-shot)
 npm run build:watch    # Build incremental
 npm run lint           # ESLint
 npm run logs           # Tail logs producción
-firebase functions:config:get
 ```
 
 ## Troubleshooting express
@@ -126,6 +129,7 @@ firebase functions:config:get
 1. Apuntar el webhook de Twilio (POST) a la URL de `twilioWebhook` — valida firma y encola solo. Ver [`SETUP.md`](SETUP.md) Paso 9.1.
 2. Probar con WhatsApp real (sandbox).
 3. Índices/reglas Firestore: **NO** desde este repo — los gestiona el proyecto `D:\PROYECTOS\gepres\gastos` (ver `SETUP.md` Paso 10/11).
-4. Correr la migración una vez: `npm run backfill:accounts`.
+4. Crear la cuenta del usuario en el **web app** (sección Cuentas) — el bot usa la cuenta canónica, no crea cuentas (`backfill:accounts` quedó obsoleto, ver `SETUP.md` §10.1).
+5. Activar la alert policy una vez: `ops/README.md` (ver `SETUP.md` §9.2).
 
 Documentación completa: [`README`](../README.md) · [`FEATURES`](FEATURES.md) · [`EXAMPLES`](EXAMPLES.md)
