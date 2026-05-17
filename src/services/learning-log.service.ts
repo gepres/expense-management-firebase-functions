@@ -1,54 +1,20 @@
 import { getFirestore, Timestamp } from "firebase-admin/firestore";
 import * as logger from "firebase-functions/logger";
 import {
+  tokenizeForLearning,
+  tokenOverlap,
+  buildLearningLogDoc,
+} from "@gastos/expense-ai";
+import {
   LearningLogEntry,
   LearningLogEntryInput,
   LearningLogFeedback,
 } from "../types";
 
-const TOKEN_MIN_LENGTH = 3;
-const TOKEN_STOPWORDS = new Set([
-  "del",
-  "las",
-  "los",
-  "por",
-  "con",
-  "para",
-  "que",
-  "una",
-  "uno",
-  "soles",
-  "sol",
-  "gaste",
-  "pague",
-  "compre",
-]);
-
-// Tokeniza una descripción normalizada para queries de similaridad
-// (Firestore array-contains-any). Tokens ≥ 3 chars, sin stopwords ES.
-// Cap a 10 (límite de array-contains-any).
-export function tokenizeForLearning(normalized: string): string[] {
-  const words = normalized
-    .split(/[^a-z0-9]+/i)
-    .filter((w) => w.length >= TOKEN_MIN_LENGTH && !TOKEN_STOPWORDS.has(w));
-  const unique = Array.from(new Set(words));
-  return unique.slice(0, 10);
-}
-
-// Solape entre dos sets de tokens: |∩| / min(|a|,|b|) (overlap coef).
-// Más tolerante que Jaccard a diferencias de longitud: una corrección
-// corta ("taxi") debe seguir aplicando a "taxi al centro comercial".
-// 0 si alguno está vacío. Tokens ya únicos (tokenizeForLearning).
-export function tokenOverlap(a: string[], b: string[]): number {
-  if (a.length === 0 || b.length === 0) return 0;
-  const setA = new Set(a);
-  const setB = new Set(b);
-  let inter = 0;
-  for (const t of setA) {
-    if (setB.has(t)) inter++;
-  }
-  return inter / Math.min(setA.size, setB.size);
-}
+// Tokenización/solape viven en `@gastos/expense-ai` (single source of
+// truth con gastos-backend). Se re-exportan para no tocar a los
+// importadores históricos (tests, etc.).
+export { tokenizeForLearning, tokenOverlap };
 
 // Bitácora append-only de decisiones de inferencia para personalizar
 // futuras decisiones del bot por usuario. ROADMAP § G.
@@ -69,29 +35,13 @@ export class LearningLogService {
   ): Promise<string | null> {
     try {
       const docRef = this.col(userId).doc();
-      // Firestore rechaza `undefined` (incl. anidado): podar opcionales.
-      const decision: Record<string, unknown> = {
-        field: entry.decision.field,
-        value: entry.decision.value,
-        source: entry.decision.source,
-      };
-      if (entry.decision.matchedTerm !== undefined) {
-        decision.matchedTerm = entry.decision.matchedTerm;
-      }
-      if (entry.decision.confidence !== undefined) {
-        decision.confidence = entry.decision.confidence;
-      }
-      const doc: Record<string, unknown> = {
-        type: entry.type,
-        input: entry.input,
-        decision,
-        tokens: tokenizeForLearning(entry.input.normalized),
+      // Doc canónico (poda undefined + tokens) desde el paquete
+      // compartido → byte-compatible con gastos-backend. `createdAt` lo
+      // añade cada repo con su propio Timestamp.
+      await docRef.set({
+        ...buildLearningLogDoc(entry),
         createdAt: Timestamp.now(),
-      };
-      if (entry.expenseId !== undefined) {
-        doc.expenseId = entry.expenseId;
-      }
-      await docRef.set(doc);
+      });
       return docRef.id;
     } catch (error) {
       logger.error("Error appending learning_log entry:", error);
