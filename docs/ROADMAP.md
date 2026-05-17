@@ -17,6 +17,7 @@ Hoja de ruta consolidada para la siguiente fase de desarrollo. Reemplaza las sec
 ### ✅ Hecho desde 2026-05-14
 
 - § B.1–B.6 (cuenta activa, moneda heredada, validaciones monto/método/fecha, flujo de clasificación, `sin_clasificar`), § G (IA en decisiones + `learning_log`), § C.1/C.2 (idempotencia + auditoría).
+- § A.1: `isValidAudioType` ya **centralizado** en `src/utils/media-types.ts` (sin duplicado en media-downloader/transcription); `voucherType` de `parseExpenseMessage` **limpiado** (`ExpenseData.voucherType` opcional, lo resuelve `inferVoucherType`). Los `[ ]` de § A.1 están obsoletos.
 - § A.2 `getExpenseSummary` por mes **arreglado** (el `[ ]` de abajo está obsoleto).
 - § A.3 completo: Functions v2 + `defineSecret`, webhook Twilio absorbido + validación de firma, tests `node:test`.
 - **Nuevo (no estaba en el roadmap):** ayuda menú+temas, onboarding automático, consultas (`cuánto gasté hoy`, `gastos de hoy`, `mis categorías/cuentas/métodos`), **edición del último gasto** (borrar/corregir con confirmación — § H lo daba como "solo dashboard", ya no), Node 22 + `firebase-functions@^6.6.0`, CI (GitHub Actions), alerta `onWhatsAppQueueFailed` (policy versionada en `ops/`).

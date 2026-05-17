@@ -58,7 +58,9 @@ export class ExpenseService {
         subcategoria: expenseData.subcategoria,
         recurrente: expenseData.recurrente,
         reimbursementStatus: expenseData.reimbursementStatus,
-        voucherType: expenseData.voucherType,
+        // Defensivo: el flujo real siempre lo pasa (inferVoucherType);
+        // el default evita escribir `undefined` si algún caller lo omite.
+        voucherType: expenseData.voucherType ?? "boleta",
         createdAt: now,
         updatedAt: now,
       };

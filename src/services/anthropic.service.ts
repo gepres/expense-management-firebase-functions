@@ -221,7 +221,8 @@ NO incluyas texto adicional, SOLO el objeto JSON.`;
         subcategoria: null,
         recurrente: false,
         reimbursementStatus: "pending",
-        voucherType: "boleta",
+        // voucherType NO se setea acá: lo resuelve inferVoucherType en
+        // finalizeAndRegisterExpense (este valor se ignoraba — § A.1).
       };
 
       return {

@@ -61,7 +61,10 @@ export interface ExpenseData extends ExpenseAuditFields {
   recurrente: boolean;
   reimbursementStatus: "pending" | "approved" | "rejected";
   userId: string;
-  voucherType: string;
+  // Opcional: NO se infiere al parsear. `finalizeAndRegisterExpense` lo
+  // resuelve siempre con InferenceService.inferVoucherType y lo pasa a
+  // saveExpense. Mantenerlo opcional evita defaults muertos en los parsers.
+  voucherType?: string;
   // Fase "validaciones + clasificación inteligente":
   accountId?: string;
   needsClassification?: boolean;
