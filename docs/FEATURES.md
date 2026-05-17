@@ -116,6 +116,8 @@ Cada gasto pertenece a una **cuenta canónica** (colección top-level `accounts`
 
 ## Clasificación (`InferenceService.classify`)
 
+> El ranking vive en el paquete compartido **`@gastos/expense-ai`** (single source of truth con el web app `gastos-backend`, que clasifica voz/recibos con la **misma** lógica). `InferenceService` acá es un adapter que inyecta Firestore + `learning_log` + LLM. El comportamiento es idéntico al descrito abajo.
+
 Orden estricto, match por **palabra/frase completa** sobre texto normalizado (sin diacríticos, minúsculas) — no `includes` substring:
 
 1. `suggestions_ideas` de subcategorías → adopta subcategoría dueña + su categoría.

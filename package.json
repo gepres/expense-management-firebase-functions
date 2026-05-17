@@ -28,7 +28,7 @@
   "main": "lib/index.js",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.96.0",
-    "@gastos/expense-ai": "file:vendor/gastos-expense-ai-0.1.0.tgz",
+    "@gastos/expense-ai": "file:vendor/gastos-expense-ai-0.2.0.tgz",
     "axios": "^1.7.7",
     "firebase-admin": "^12.0.0",
     "firebase-functions": "^6.6.0",
