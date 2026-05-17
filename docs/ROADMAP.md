@@ -17,8 +17,8 @@ Hoja de ruta consolidada para la siguiente fase de desarrollo. Reemplaza las sec
 ### ✅ Hecho desde 2026-05-14
 
 - § B.1–B.6 (cuenta activa, moneda heredada, validaciones monto/método/fecha, flujo de clasificación, `sin_clasificar`), § G (IA en decisiones + `learning_log`), § C.1/C.2 (idempotencia + auditoría).
-- § A.1: `isValidAudioType` ya **centralizado** en `src/utils/media-types.ts` (sin duplicado en media-downloader/transcription); `voucherType` de `parseExpenseMessage` **limpiado** (`ExpenseData.voucherType` opcional, lo resuelve `inferVoucherType`). Los `[ ]` de § A.1 están obsoletos.
-- § A.2 `getExpenseSummary` por mes **arreglado** (el `[ ]` de abajo está obsoleto).
+- § A.1: `isValidAudioType` **centralizado** y `voucherType` de `parseExpenseMessage` **limpiado** (ambos `[x]` abajo). Siguen `[ ]` (vigentes): cache por invocación de categories/payment_methods y **D** (embeddings, opcional).
+- § A.2 `getExpenseSummary` por mes **arreglado** (`[x]` abajo).
 - § A.3 completo: Functions v2 + `defineSecret`, webhook Twilio absorbido + validación de firma, tests `node:test`.
 - **Nuevo (no estaba en el roadmap):** ayuda menú+temas, onboarding automático, consultas (`cuánto gasté hoy`, `gastos de hoy`, `mis categorías/cuentas/métodos`), **edición del último gasto** (borrar/corregir con confirmación — § H lo daba como "solo dashboard", ya no), Node 22 + `firebase-functions@^6.6.0`, CI (GitHub Actions), alerta `onWhatsAppQueueFailed` (policy versionada en `ops/`).
 
@@ -44,15 +44,15 @@ Backlog priorizado y vigente en [`README.md`](../README.md#estado-y-próximas-me
 ## A. Recomendaciones ya documentadas
 
 ### A.1 Inferencia y matching
-- [ ] Centralizar `isValidAudioType` (duplicado en `media-downloader.ts` y `transcription.service.ts`).
-- [ ] Limpiar `voucherType` devuelto por `AnthropicService.parseExpenseMessage` (hoy se ignora en `index.ts`).
+- [x] Centralizar `isValidAudioType` (ahora fuente única en `src/utils/media-types.ts`; media-downloader/transcription delegan).
+- [x] Limpiar `voucherType` devuelto por `AnthropicService.parseExpenseMessage` (`ExpenseData.voucherType` opcional; lo resuelve `inferVoucherType` en `finalize`).
 - [ ] Cache por invocación de `users/{uid}/categories` y `users/{uid}/payment_methods` (evita 1..N lecturas por mensaje).
 - [x] Bug latente `recordUserFeedback`: el paso 4 ahora prioriza `user_correction` (no el campo `userFeedback` muerto). `ARCHITECTURE.md` #9.
 - [x] Relación de contenido en `classify` — **E** (historial por solape de tokens, `tokenOverlap`) + **C** (paso 5 LLM acotado a la taxonomía, reusa hint / llama solo en miss). `ARCHITECTURE.md` #10.
 - [ ] **D (opcional):** embeddings + coseno en memoria para clasificación/historial, solo si E+C no alcanzan en la práctica.
 
 ### A.2 Reportes
-- [ ] Fix `ExpenseService.getExpenseSummary` con `month` — hoy compara strings `YYYY-MM-01` contra `Timestamp`, nunca matchea. Usar `Timestamp.fromDate(new Date(year, month-1, 1))` + cota `< Timestamp.fromDate(new Date(year, month, 1))`.
+- [x] Fix `ExpenseService.getExpenseSummary` con `month` — ya usa `Timestamp.fromDate(new Date(year, month-1, 1))` + cota `< Timestamp.fromDate(new Date(year, month, 1))`.
 
 ### A.3 Infraestructura
 - [x] Migrar `firebase-functions/v1` → `v2` (`onDocumentCreated`/`onRequest`).
