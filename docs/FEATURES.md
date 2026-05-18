@@ -211,7 +211,11 @@ Feature multi-repo (contrato completo: `gastos/docs/ai-usage.md`).
 | `completed`  | Procesado OK, o terminado intencionalmente (sin contenido)    |
 | `failed`     | 3 intentos fallidos. Se notifica al usuario por WhatsApp      |
 
-Reintentos: máximo **3**. El `retryCount` se incrementa y el doc vuelve a `pending` para que el trigger lo retome.
+Reintentos: máximo **3**. El `catch` incrementa `retryCount` y deja el doc en `pending`. Como `onDocumentCreated` solo dispara en la *creación*, quien efectivamente reprocesa es **`reprocessPendingQueue`** (scheduler, cada 2 min): toma los `pending` con `retryCount ≤ 3` que no son recién creados (respeta la ventana del `onCreate`), hace un *claim* transaccional `pending → processing` (evita doble toma) y reinvoca el mismo `handleQueueDoc`. También recupera `processing` huérfano (> 10 min, función crasheada a mitad) volviéndolo a `pending`, y emite `whatsapp_queue_stuck` si un `pending` supera `retryCount > 3`. Sin este scheduler un fallo transitorio se perdía en silencio (el doc quedaba `pending` para siempre, sin alerta).
+
+Resiliencia IA: las llamadas a Anthropic/OpenAI usan `withRetry` (backoff exponencial + jitter ante 429/408/5xx/errores de red, `src/utils/retry.ts`). Si el error persiste tras los reintentos se **propaga** (no se traga como "no pude procesar"): el pipeline deja el doc `pending` y el scheduler lo reintenta. Un error definitivo (4xx ≠ 429/408, JSON inválido) no se reintenta y sigue el camino de error normal.
+
+Dedupe sin carrera: `twilioWebhook` encola con **ID determinístico = `MessageSid`** (`.doc(sid).create()`). Un reintento de Twilio con el mismo `MessageSid` falla con `ALREADY_EXISTS` y se ignora (200) — no se encola un 2º doc ni se dispara un 2º pipeline. La consulta `findByMessageSid` en `finalize` queda como defensa en profundidad (cubre el caso raro sin `MessageSid`, que cae a `.add()`).
 
 ---
 
@@ -289,6 +293,8 @@ Periodos (`MessageParser.resolveQueryPeriod`, lógica pura testeada): `hoy`, `ay
 | `olvidar historial` | Pide confirmación (acción destructiva) |
 | `olvidar historial confirmar` | Ejecuta el soft delete del historial |
 
+`olvidar historial confirmar` hace **soft delete paginado** (BulkWriter, auto-batch ≤500 — un `batch()` único reventaba con >500 entradas). El **hard delete** lo hace el job `purgeDeletedLearningLog` (`onSchedule` diario): borra vía `collectionGroup("learning_log")` las entradas con `deletedAt` más viejo que `LEARNING_LOG_PURGE_DAYS` (default 30 días), con tope por corrida (drena en las siguientes). Sin esto el `learning_log` crecía sin cota.
+
 ### Editar el último gasto + estado de conversación
 Acciones que mutan/destruyen requieren confirmación. Se modela con un **estado de conversación corto**: `PendingActionService` guarda un `PendingAction` en `users/{uid}/sessions/pending_action` (TTL 10 min).
 
@@ -308,17 +314,33 @@ Orden en `processTextMessage` (crítico): la **confirmación se evalúa primero*
 
 ## Observabilidad
 
-`onWhatsAppQueueFailed` (`onDocumentUpdated` sobre `whatsapp_queue`) es la **única superficie de alerta**: capta cualquier transición a `status: "failed"` (sin importar el camino que la causó) y emite un log estructurado estable. Configurar una alert policy en Cloud Logging:
+Dos superficies de alerta (la policy las cubre con `combiner: OR`):
+
+- `onWhatsAppQueueFailed` (`onDocumentUpdated` sobre `whatsapp_queue`): capta cualquier transición a `status: "failed"` y emite `whatsapp_queue_failed`. Guard con early-return → costo ~nulo en los updates normales (`pending`/`processing`/`completed`).
+- `reprocessPendingQueue` (scheduler): emite `whatsapp_queue_stuck` cuando un doc `pending` con `retryCount > 3` no progresa (el `failed` clásico puede no alcanzarse).
 
 ```
 resource.type="cloud_run_revision"
 jsonPayload.event="whatsapp_queue_failed"
 severity=ERROR
 ```
-
-Guard con early-return → costo ~nulo en los updates normales (`pending`/`processing`/`completed`).
+```
+resource.type="cloud_run_revision"
+jsonPayload.event="whatsapp_queue_stuck"
+severity=ERROR
+```
 
 La **alert policy** está versionada en [`ops/alert-policy.json`](../ops/alert-policy.json); el deploy de funciones **no** la crea. Aplicarla una vez con el runbook [`ops/README.md`](../ops/README.md) (`gcloud` + canal de notificación). El deep-link de los mensajes al web app se controla con `WEBAPP_URL` en `.env` (apunta a `/cuentas`).
+
+---
+
+## Configuración de runtime y límites
+
+`setGlobalOptions` (en `index.ts`) fija config explícita en vez de defaults sin gestionar: `region: us-central1` (la **misma** implícita actual → no recrea funciones ni cambia la URL del webhook), `memory: 512MiB`, `timeoutSeconds: 120`, `maxInstances: 20` (acota el fan-out de los caminos con IA para no reventar el TPM de Anthropic/OpenAI). `concurrency` se deja en default (HTTP 80, event-trigger forzado a 1). Overrides por función: `twilioWebhook` sube a `maxInstances: 50` y baja memoria/timeout (ingesta liviana, no estrangular); `reprocessPendingQueue` y `purgeDeletedLearningLog` usan `timeoutSeconds: 300`.
+
+**Caché in-instance de taxonomía** (`src/utils/ttl-cache.ts`): `getCategories`/`getPaymentMethods` se cacheaban por usuario con TTL 60 s para no releer la subcolección en cada mensaje. ⚠️ **Consistencia eventual:** un alta de categoría/método en la app web tarda **hasta 60 s** en verse por WhatsApp; no asumir lectura fresca por mensaje. No se cachea `[]` (distingue "sin datos" de fallo de lectura).
+
+Clientes SDK (Twilio/Anthropic/OpenAI) son **singletons lazy por instancia** (reuso de pool TLS); antes se instanciaba uno nuevo en cada `new XService()`, varias veces por mensaje.
 
 ## CI
 

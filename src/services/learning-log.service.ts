@@ -132,18 +132,78 @@ export class LearningLogService {
   }
 
   // Soft delete del historial del usuario (comando "olvidar historial").
-  // Hard delete después de N días lo cubre un job externo.
+  // Paginado + BulkWriter: un `db.batch()` único reventaba con >500
+  // entradas (límite Firestore); BulkWriter auto-batchea a ≤500 y
+  // reintenta. El hard-delete posterior lo hace `purgeSoftDeleted` (job
+  // `purgeDeletedLearningLog`, rec. #4 docs/AUDIT.md).
   async softDeleteAll(userId: string): Promise<boolean> {
     try {
-      const snap = await this.col(userId).get();
-      const batch = this.db.batch();
       const now = Timestamp.now();
-      snap.docs.forEach((doc) => batch.update(doc.ref, { deletedAt: now }));
-      await batch.commit();
+      const writer = this.db.bulkWriter();
+      const pageSize = 400;
+      let last: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+      let total = 0;
+      let page = await this.col(userId)
+        .orderBy("__name__")
+        .limit(pageSize)
+        .get();
+      while (!page.empty) {
+        for (const doc of page.docs) {
+          void writer.update(doc.ref, { deletedAt: now });
+        }
+        total += page.size;
+        if (page.size < pageSize) break;
+        last = page.docs[page.docs.length - 1];
+        page = await this.col(userId)
+          .orderBy("__name__")
+          .startAfter(last)
+          .limit(pageSize)
+          .get();
+      }
+      await writer.close();
+      logger.info(
+        `learning_log soft-delete: ${total} entradas (user ${userId})`
+      );
       return true;
     } catch (error) {
       logger.error("Error soft-deleting learning log:", error);
       return false;
     }
+  }
+
+  // Hard delete de entradas soft-deleted hace > `olderThan` (job
+  // `purgeDeletedLearningLog`, rec. #4). collectionGroup + filtro/orden
+  // por `deletedAt`: solo requiere el índice de campo único AUTOMÁTICO
+  // (no compuesto → no toca firestore.indexes.json, §7). Tope `max` por
+  // corrida; el resto se drena en corridas siguientes. Devuelve cuántas
+  // borró.
+  async purgeSoftDeleted(
+    olderThan: Date,
+    max: number = 5000
+  ): Promise<number> {
+    const cutoff = Timestamp.fromDate(olderThan);
+    const writer = this.db.bulkWriter();
+    const pageSize = 400;
+    let deleted = 0;
+    let last: FirebaseFirestore.QueryDocumentSnapshot | undefined;
+    const base = (): FirebaseFirestore.Query =>
+      this.db
+        .collectionGroup("learning_log")
+        .where("deletedAt", "<", cutoff)
+        .orderBy("deletedAt")
+        .limit(pageSize);
+    let page = await base().get();
+    while (!page.empty) {
+      for (const doc of page.docs) {
+        if (deleted >= max) break;
+        void writer.delete(doc.ref);
+        deleted++;
+      }
+      if (deleted >= max || page.size < pageSize) break;
+      last = page.docs[page.docs.length - 1];
+      page = await base().startAfter(last).get();
+    }
+    await writer.close();
+    return deleted;
   }
 }

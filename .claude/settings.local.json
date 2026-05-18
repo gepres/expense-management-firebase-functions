@@ -70,7 +70,10 @@
       "Bash(gcloud auth *)",
       "Bash(sed -n '/RESULTADOS/,/OK/p' /tmp/smoke2.log)",
       "Bash(TZ=UTC node -e \"const{MessageParser}=require\\('./lib/utils/message-parser'\\);const p=MessageParser.resolveQueryPeriod\\('hoy'\\);console.log\\('  ventana [start,end\\) en UTC:',p.start.toISOString\\(\\),'→',p.end.toISOString\\(\\)\\)\")",
-      "Bash(TZ=America/Lima node -e \"const{MessageParser}=require\\('./lib/utils/message-parser'\\);const p=MessageParser.resolveQueryPeriod\\('hoy'\\);console.log\\('  ventana [start,end\\) en UTC:',p.start.toISOString\\(\\),'→',p.end.toISOString\\(\\)\\)\")"
+      "Bash(TZ=America/Lima node -e \"const{MessageParser}=require\\('./lib/utils/message-parser'\\);const p=MessageParser.resolveQueryPeriod\\('hoy'\\);console.log\\('  ventana [start,end\\) en UTC:',p.start.toISOString\\(\\),'→',p.end.toISOString\\(\\)\\)\")",
+      "Bash(cd /d D:\\\\PROYECTOS\\\\gepres\\\\gastos-expense-ai)",
+      "Bash(dir /b /s src)",
+      "PowerShell(Get-ChildItem -Recurse -File D:\\\\PROYECTOS\\\\gepres\\\\gastos-expense-ai\\\\src | Select-Object -ExpandProperty FullName; \"----PKGJSON----\"; Get-Content D:\\\\PROYECTOS\\\\gepres\\\\gastos-expense-ai\\\\package.json -Raw)"
     ]
   }
 }

@@ -1,8 +1,16 @@
 # Ops — alerta de fallos del pipeline
 
-`onWhatsAppQueueFailed` (función) emite un log estructurado estable cada vez
-que un doc de `whatsapp_queue` transiciona a `status: "failed"` (3 reintentos
-agotados). Este runbook crea la **alert policy** que notifica sobre ese log.
+El pipeline emite **dos** logs estructurados estables (la alert policy los
+cubre con `combiner: OR`):
+
+- `whatsapp_queue_failed` — `onWhatsAppQueueFailed` lo emite cuando un doc de
+  `whatsapp_queue` transiciona a `status: "failed"` (3 reintentos agotados).
+- `whatsapp_queue_stuck` — `reprocessPendingQueue` (scheduler, cada 2 min) lo
+  emite cuando un doc `pending` con `retryCount > 3` no progresa. Ese mismo
+  scheduler **resucita el reintento** (reprocesa `pending`, recupera
+  `processing` huérfano); sin él un fallo transitorio se perdía en silencio.
+
+Este runbook crea la **alert policy** que notifica sobre esos logs.
 
 > El deploy de funciones **no** crea la alerta — es un recurso de Cloud
 > Monitoring aparte. Hacer esto una vez (idempotente: re-correr actualiza).
@@ -52,11 +60,17 @@ gcloud alpha monitoring policies list --project=expense-app-gepres \
 
 ## 3. Probar (opcional)
 
-Forzar un `failed` en el emulador o esperar uno real. El log debe matchear:
+Forzar un `failed` en el emulador o esperar uno real. El log debe matchear
+alguno de los dos filtros (la policy usa `combiner: OR`):
 
 ```
 resource.type="cloud_run_revision"
 jsonPayload.event="whatsapp_queue_failed"
+severity=ERROR
+```
+```
+resource.type="cloud_run_revision"
+jsonPayload.event="whatsapp_queue_stuck"
 severity=ERROR
 ```
 
@@ -73,5 +87,6 @@ pegar el filtro de arriba → notification channel → Save.
 - `notificationRateLimit: 300s` evita tormenta de alertas si fallan muchos
   mensajes seguidos; `autoClose: 1800s` cierra el incidente solo.
 - Funciones v2 corren en Cloud Run → `resource.type="cloud_run_revision"`.
-- Si se renombra el evento en `onWhatsAppQueueFailed`, actualizar el filtro
-  acá **y** en `alert-policy.json` (mantener en sync).
+- Si se renombra alguno de los eventos (`whatsapp_queue_failed` en
+  `onWhatsAppQueueFailed`, `whatsapp_queue_stuck` en `reprocessPendingQueue`),
+  actualizar el filtro acá **y** en `alert-policy.json` (mantener en sync).

@@ -4,6 +4,8 @@ import {
   onDocumentUpdated,
 } from "firebase-functions/v2/firestore";
 import { onRequest } from "firebase-functions/v2/https";
+import { onSchedule } from "firebase-functions/v2/scheduler";
+import { setGlobalOptions } from "firebase-functions/v2";
 import { defineSecret } from "firebase-functions/params";
 import * as logger from "firebase-functions/logger";
 import * as admin from "firebase-admin";
@@ -49,8 +51,24 @@ import {
   buildQueueDocFromTwilio,
 } from "./utils/twilio-webhook";
 import { toCsv } from "./utils/csv";
+import { isTransientError } from "./utils/retry";
 
 admin.initializeApp();
+
+// Config explícita (rec. #5 docs/AUDIT.md): antes todo quedaba en
+// defaults de plataforma (sin gestionar). `region` = us-central1 (la
+// MISMA implícita actual → no recrea funciones ni cambia la URL del
+// webhook; fijarla evita un cambio accidental destructivo). `maxInstances`
+// acota el fan-out de los caminos con IA para no reventar el TPM de
+// Anthropic/OpenAI en picos. `concurrency` se deja en el default (HTTP 80,
+// event-trigger forzado a 1) — NO bajar el webhook a 1. El webhook se
+// sube aparte (ver twilioWebhook) para no estrangular la ingesta.
+setGlobalOptions({
+  region: "us-central1",
+  memory: "512MiB",
+  timeoutSeconds: 120,
+  maxInstances: 20,
+});
 
 // Secrets v2 (reemplazan functions.config()). Al bindearlos a la función,
 // sus valores quedan expuestos como process.env.<NAME> en runtime, que es
@@ -82,155 +100,175 @@ export const processWhatsAppQueue = onDocumentCreated(
       logger.warn("processWhatsAppQueue: event sin data");
       return;
     }
-    const queueId = event.params.queueId;
-    const data = snap.data() as WhatsAppQueueDocument;
+    await handleQueueDoc(snap, event.params.queueId);
+  }
+);
 
-    logger.info(`📨 Processing queue item: ${queueId}`, {
-      from: data.phoneNumber,
-      hasMedia: !!data.webhookBody.MediaUrl0,
+/**
+ * Procesa un doc de `whatsapp_queue`. Lo invocan `processWhatsAppQueue`
+ * (onCreate) y `reprocessPendingQueue` (scheduler, rec. #1 de docs/AUDIT.md)
+ * para recuperar items que quedaron `pending` tras un fallo transitorio.
+ * Su `catch` aplica la política de reintento (pending → retry, failed al
+ * agotar 3); el scheduler es el que vuelve a invocarlo.
+ * @param {FirebaseFirestore.DocumentSnapshot} snap Doc de la cola.
+ * @param {string} queueId Id del doc (= MessageSid si vino del webhook).
+ * @return {Promise<void>} resuelve al terminar.
+ */
+async function handleQueueDoc(
+  snap: FirebaseFirestore.DocumentSnapshot,
+  queueId: string
+): Promise<void> {
+  const data = snap.data() as WhatsAppQueueDocument | undefined;
+  if (!data) {
+    logger.warn(`handleQueueDoc: doc ${queueId} sin data`);
+    return;
+  }
+
+  logger.info(`📨 Processing queue item: ${queueId}`, {
+    from: data.phoneNumber,
+    hasMedia: !!data.webhookBody.MediaUrl0,
+  });
+
+  try {
+    await snap.ref.update({
+      status: "processing",
+      processedAt: Timestamp.now(),
     });
 
-    try {
-      await snap.ref.update({
-        status: "processing",
-        processedAt: Timestamp.now(),
-      });
+    const phoneNumber = MessageParser.normalizePhoneNumber(data.phoneNumber);
+    const message = MessageParser.sanitizeInput(data.message || "");
 
-      const phoneNumber = MessageParser.normalizePhoneNumber(data.phoneNumber);
-      const message = MessageParser.sanitizeInput(data.message || "");
+    // Validate user registration
+    const userService = new UserService();
+    const user = await userService.findByWhatsAppPhone(phoneNumber);
 
-      // Validate user registration
-      const userService = new UserService();
-      const user = await userService.findByWhatsAppPhone(phoneNumber);
+    if (!user) {
+      logger.warn(`User not registered: ${phoneNumber}`);
+      const twilioService = new TwilioService();
+      await twilioService.sendMessage(
+        phoneNumber,
+        "❌ No estás registrado en la plataforma.\n\n" +
+        "Por favor vincula tu número de WhatsApp desde tu perfil en la aplicación."
+      );
+      await snap.ref.update({ status: "completed" });
+      return;
+    }
 
-      if (!user) {
-        logger.warn(`User not registered: ${phoneNumber}`);
+    logger.info(`✅ User found: ${user.id}`);
+
+    // Onboarding automático en el primer contacto tras vincular WhatsApp.
+    // Idempotente (no se repite en reintentos de Twilio). Guard: si el
+    // usuario ya tiene historial de aprendizaje es alguien previo a esta
+    // feature → no lo saludamos (evita spam tras el deploy).
+    const onboardingService = new OnboardingService();
+    const claimedFirstContact =
+      await onboardingService.tryClaimFirstContact(user.id);
+    if (claimedFirstContact) {
+      const priorLog = await new LearningLogService().getRecent(user.id, 1);
+      if (priorLog.length === 0) {
         const twilioService = new TwilioService();
         await twilioService.sendMessage(
           phoneNumber,
-          "❌ No estás registrado en la plataforma.\n\n" +
-          "Por favor vincula tu número de WhatsApp desde tu perfil en la aplicación."
+          buildOnboarding(user.name, true)
         );
-        await snap.ref.update({ status: "completed" });
-        return;
-      }
-
-      logger.info(`✅ User found: ${user.id}`);
-
-      // Onboarding automático en el primer contacto tras vincular WhatsApp.
-      // Idempotente (no se repite en reintentos de Twilio). Guard: si el
-      // usuario ya tiene historial de aprendizaje es alguien previo a esta
-      // feature → no lo saludamos (evita spam tras el deploy).
-      const onboardingService = new OnboardingService();
-      const claimedFirstContact =
-        await onboardingService.tryClaimFirstContact(user.id);
-      if (claimedFirstContact) {
-        const priorLog = await new LearningLogService().getRecent(user.id, 1);
-        if (priorLog.length === 0) {
-          const twilioService = new TwilioService();
-          await twilioService.sendMessage(
-            phoneNumber,
-            buildOnboarding(user.name, true)
-          );
-          // Si el primer mensaje era solo un saludo/ayuda/vacío, la
-          // bienvenida ya lo respondió: cerramos sin re-procesar (evita
-          // doble bienvenida). Si trajo un gasto/comando real, seguimos.
-          const greetingOnly =
-            !MessageParser.hasMedia(data.webhookBody) &&
-            (!message ||
-              MessageParser.isCommandMessage(message).command === "inicio" ||
-              MessageParser.parseHelpCommand(message) !== null);
-          if (greetingOnly) {
-            await snap.ref.update({ status: "completed" });
-            return;
-          }
-        }
-      }
-
-      // Resolve active account (session override → primary → first).
-      // Sin cuenta canónica el bot no puede registrar: en vez de
-      // reintentar 3× y fallar con un genérico, guiamos al usuario.
-      const accountService = new AccountService();
-      let account: Account;
-      try {
-        account = await accountService.resolveActiveAccount(user.id);
-      } catch (accErr) {
-        if (accErr instanceof NoCanonicalAccountError) {
-          const webapp = process.env.WEBAPP_URL;
-          const twilioService = new TwilioService();
-          await twilioService.sendMessage(
-            phoneNumber,
-            "👋 Casi listo. Aún no tienes una *cuenta* creada, " +
-            "así que todavía no puedo registrar tus gastos.\n\n" +
-            "Crea tu cuenta desde la app (sección *Cuentas*)" +
-            (webapp ? `:\n${webapp}` : ".") +
-            "\n\nLuego reenvíame tu mensaje y lo registro. 💸"
-          );
-          await snap.ref.update({
-            status: "completed",
-            error: "no canonical account",
-          });
+        // Si el primer mensaje era solo un saludo/ayuda/vacío, la
+        // bienvenida ya lo respondió: cerramos sin re-procesar (evita
+        // doble bienvenida). Si trajo un gasto/comando real, seguimos.
+        const greetingOnly =
+          !MessageParser.hasMedia(data.webhookBody) &&
+          (!message ||
+            MessageParser.isCommandMessage(message).command === "inicio" ||
+            MessageParser.parseHelpCommand(message) !== null);
+        if (greetingOnly) {
+          await snap.ref.update({ status: "completed" });
           return;
-        }
-        throw accErr;
-      }
-      logger.info(
-        `💳 Active account: ${account.id} (${account.nombre}, ${account.moneda})`
-      );
-
-      // Check if message has media
-      const hasMedia = MessageParser.hasMedia(data.webhookBody);
-
-      if (hasMedia && data.webhookBody.MediaUrl0) {
-        const mediaContentType = data.webhookBody.MediaContentType0 || "";
-
-        // Check if it's an audio file
-        if (MediaDownloader.isValidAudioType(mediaContentType)) {
-          await processAudioMessage(user, account, phoneNumber, data.webhookBody, snap);
-        } else {
-          // Process as image
-          await processImageMessage(user, account, phoneNumber, data.webhookBody, snap);
-        }
-      } else if (message) {
-        await processTextMessage(user, account, phoneNumber, message, snap);
-      } else {
-        logger.warn("Message with no text and no media");
-        await snap.ref.update({
-          status: "completed",
-          error: "No content to process",
-        });
-      }
-    } catch (error) {
-      logger.error(`Error processing queue item ${queueId}:`, error);
-
-      const retryCount = data.retryCount || 0;
-
-      if (retryCount < 3) {
-        await snap.ref.update({
-          status: "pending",
-          retryCount: retryCount + 1,
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
-      } else {
-        await snap.ref.update({
-          status: "failed",
-          error: error instanceof Error ? error.message : "Unknown error",
-        });
-
-        try {
-          const phoneNumber = MessageParser.normalizePhoneNumber(data.phoneNumber);
-          const twilioService = new TwilioService();
-          await twilioService.sendMessage(
-            phoneNumber,
-            "❌ Error al procesar tu mensaje después de varios intentos. Por favor intenta de nuevo más tarde."
-          );
-        } catch (sendError) {
-          logger.error("Error sending failure notification:", sendError);
         }
       }
     }
+
+    // Resolve active account (session override → primary → first).
+    // Sin cuenta canónica el bot no puede registrar: en vez de
+    // reintentar 3× y fallar con un genérico, guiamos al usuario.
+    const accountService = new AccountService();
+    let account: Account;
+    try {
+      account = await accountService.resolveActiveAccount(user.id);
+    } catch (accErr) {
+      if (accErr instanceof NoCanonicalAccountError) {
+        const webapp = process.env.WEBAPP_URL;
+        const twilioService = new TwilioService();
+        await twilioService.sendMessage(
+          phoneNumber,
+          "👋 Casi listo. Aún no tienes una *cuenta* creada, " +
+          "así que todavía no puedo registrar tus gastos.\n\n" +
+          "Crea tu cuenta desde la app (sección *Cuentas*)" +
+          (webapp ? `:\n${webapp}` : ".") +
+          "\n\nLuego reenvíame tu mensaje y lo registro. 💸"
+        );
+        await snap.ref.update({
+          status: "completed",
+          error: "no canonical account",
+        });
+        return;
+      }
+      throw accErr;
+    }
+    logger.info(
+      `💳 Active account: ${account.id} (${account.nombre}, ${account.moneda})`
+    );
+
+    // Check if message has media
+    const hasMedia = MessageParser.hasMedia(data.webhookBody);
+
+    if (hasMedia && data.webhookBody.MediaUrl0) {
+      const mediaContentType = data.webhookBody.MediaContentType0 || "";
+
+      // Check if it's an audio file
+      if (MediaDownloader.isValidAudioType(mediaContentType)) {
+        await processAudioMessage(user, account, phoneNumber, data.webhookBody, snap);
+      } else {
+        // Process as image
+        await processImageMessage(user, account, phoneNumber, data.webhookBody, snap);
+      }
+    } else if (message) {
+      await processTextMessage(user, account, phoneNumber, message, snap);
+    } else {
+      logger.warn("Message with no text and no media");
+      await snap.ref.update({
+        status: "completed",
+        error: "No content to process",
+      });
+    }
+  } catch (error) {
+    logger.error(`Error processing queue item ${queueId}:`, error);
+
+    const retryCount = data.retryCount || 0;
+
+    if (retryCount < 3) {
+      await snap.ref.update({
+        status: "pending",
+        retryCount: retryCount + 1,
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+    } else {
+      await snap.ref.update({
+        status: "failed",
+        error: error instanceof Error ? error.message : "Unknown error",
+      });
+
+      try {
+        const phoneNumber = MessageParser.normalizePhoneNumber(data.phoneNumber);
+        const twilioService = new TwilioService();
+        await twilioService.sendMessage(
+          phoneNumber,
+          "❌ Error al procesar tu mensaje después de varios intentos. Por favor intenta de nuevo más tarde."
+        );
+      } catch (sendError) {
+        logger.error("Error sending failure notification:", sendError);
+      }
+    }
   }
-);
+}
 
 // Fase 2: pre-chequeo de cuota IA antes de un camino que consume IA
 // (imagen/audio/parse de texto por LLM). Si excede, responde por WhatsApp
@@ -357,6 +395,9 @@ async function processImageMessage(
       comercio: extractionResult.comercio,
     });
   } catch (error) {
+    // Transitorio (429/5xx/red) → propaga: handleQueueDoc lo deja `pending`
+    // y reprocessPendingQueue lo reintenta (no quemar el intento como failed).
+    if (isTransientError(error)) throw error;
     logger.error("Error processing image message:", error);
     await twilioService.sendMessage(
       phoneNumber,
@@ -474,6 +515,7 @@ async function processAudioMessage(
       categoryHint: parseResult.expenseData.categoria || undefined,
     });
   } catch (error) {
+    if (isTransientError(error)) throw error;
     logger.error("Error processing audio message:", error);
     await twilioService.sendMessage(
       phoneNumber,
@@ -642,6 +684,7 @@ async function processTextMessage(
       parseResult.expenseData.categoria
     );
   } catch (error) {
+    if (isTransientError(error)) throw error;
     logger.error("Error processing text message:", error);
     await twilioService.sendMessage(
       phoneNumber,
@@ -1581,12 +1624,37 @@ async function handleCommand(user: UserData, phoneNumber: string, command: strin
 }
 
 /**
+ * ¿El error de Firestore es ALREADY_EXISTS? (`.create()` sobre un doc que
+ * ya existe; gRPC code 6). Base de la idempotencia del webhook (rec. #3
+ * docs/AUDIT.md): un reintento de Twilio con el mismo MessageSid no
+ * encola un 2º doc.
+ * @param {unknown} e Error a inspeccionar.
+ * @return {boolean} true si el doc ya existía.
+ */
+function isAlreadyExists(e: unknown): boolean {
+  const x = e as { code?: number | string; message?: string };
+  return (
+    x?.code === 6 ||
+    x?.code === "already-exists" ||
+    (typeof x?.message === "string" && /already exists/i.test(x.message))
+  );
+}
+
+/**
  * Twilio WhatsApp webhook. Valida X-Twilio-Signature y encola el mensaje
  * en whatsapp_queue (lo procesa processWhatsAppQueue vía onCreate).
  * Reemplaza el "Phase 1" externo. ROADMAP § A.3.
  */
 export const twilioWebhook = onRequest(
-  { secrets: [TWILIO_AUTH_TOKEN] },
+  {
+    secrets: [TWILIO_AUTH_TOKEN],
+    // Ingesta liviana (valida firma + 1 create). Más headroom que el
+    // global y timeout corto: si tarda, Twilio reintenta (idempotente
+    // por MessageSid). Concurrencia default (80) intacta.
+    maxInstances: 50,
+    memory: "256MiB",
+    timeoutSeconds: 20,
+  },
   async (req, res) => {
     if (req.method !== "POST") {
       res.status(405).send("Method Not Allowed");
@@ -1609,13 +1677,30 @@ export const twilioWebhook = onRequest(
     }
     try {
       const doc = buildQueueDocFromTwilio(body);
-      await admin
-        .firestore()
-        .collection("whatsapp_queue")
-        .add({ ...doc, createdAt: Timestamp.now() });
-      logger.info(
-        `twilioWebhook: encolado ${doc.webhookBody.MessageSid}`
-      );
+      const sid = doc.webhookBody.MessageSid;
+      const col = admin.firestore().collection("whatsapp_queue");
+      const payload = { ...doc, createdAt: Timestamp.now() };
+      if (sid) {
+        // ID determinístico = MessageSid. Un reintento de Twilio (mismo
+        // MessageSid) → .create() lanza ALREADY_EXISTS → NO se encola un
+        // 2º doc ni se dispara un 2º pipeline (elimina la carrera de
+        // duplicados de raíz; rec. #3 docs/AUDIT.md).
+        try {
+          await col.doc(sid).create(payload);
+          logger.info(`twilioWebhook: encolado ${sid}`);
+        } catch (e) {
+          if (isAlreadyExists(e)) {
+            logger.info(`twilioWebhook: duplicado ${sid} ya encolado, ignorado`);
+          } else {
+            throw e;
+          }
+        }
+      } else {
+        logger.warn(
+          "twilioWebhook: sin MessageSid; encolado con id autogenerado (sin dedupe)"
+        );
+        await col.add(payload);
+      }
       res.set("Content-Type", "text/xml");
       res.status(200).send("<Response></Response>");
     } catch (error) {
@@ -1746,5 +1831,130 @@ export const onWhatsAppQueueFailed = onDocumentUpdated(
       retryCount: after.retryCount,
       queueError: after.error ?? "unknown",
     });
+  }
+);
+
+// Reprocesador de la cola (rec. #1 docs/AUDIT.md). `onDocumentCreated` solo
+// dispara en la CREACIÓN: sin esto, un doc que el catch dejó en `pending`
+// no lo reprocesa NADIE → pérdida silenciosa. Cada 2 min:
+//  A. `processing` huérfano (la función crasheó a mitad) > 10 min → vuelve
+//     a `pending` para que se reprocese.
+//  B. `pending` con retryCount ≤ 3 y NO recién creado (se respeta la
+//     ventana del onCreate) → claim atómico pending→processing →
+//     handleQueueDoc (su catch aplica la política de reintento/failed).
+//  C. `pending` con retryCount > 3 → `whatsapp_queue_stuck` (rec. #6:
+//     superficie de alerta para items que no progresan). Ver
+//     ops/alert-policy.json.
+// Solo queries de igualdad por un campo (status) → índice automático; NO
+// requiere índice compuesto nuevo (rules/indexes son de otro repo, §7).
+const QUEUE_STALE_MS = 90_000;
+const PROCESSING_ORPHAN_MS = 10 * 60_000;
+const MAX_QUEUE_RETRY = 3;
+
+export const reprocessPendingQueue = onSchedule(
+  {
+    schedule: "every 2 minutes",
+    // Reprocesa hasta 10 pipelines/corrida (cada uno ~descarga+IA): 10×~10s
+    // holgado bajo 300s. El resto se drena en la corrida siguiente (2 min).
+    timeoutSeconds: 300,
+    secrets: [
+      TWILIO_ACCOUNT_SID,
+      TWILIO_AUTH_TOKEN,
+      TWILIO_WHATSAPP_NUMBER,
+      ANTHROPIC_API_KEY,
+      OPENAI_API_KEY,
+    ],
+  },
+  async () => {
+    const db = admin.firestore();
+    const now = Date.now();
+
+    // A. processing huérfano → pending
+    const procSnap = await db
+      .collection("whatsapp_queue")
+      .where("status", "==", "processing")
+      .limit(50)
+      .get();
+    for (const doc of procSnap.docs) {
+      const d = doc.data() as WhatsAppQueueDocument;
+      const ts = d.processedAt?.toMillis() ?? d.createdAt?.toMillis() ?? 0;
+      if (now - ts < PROCESSING_ORPHAN_MS) continue;
+      await doc.ref.update({ status: "pending" });
+      logger.warn("whatsapp_queue: processing huérfano → pending", {
+        queueId: doc.id,
+        phoneNumber: d.phoneNumber,
+      });
+    }
+
+    // B/C. pending (cap 10/corrida: cada reproceso es un pipeline caro;
+    // el cap acota el timeout y el fan-out de IA, drena en las siguientes).
+    const pendSnap = await db
+      .collection("whatsapp_queue")
+      .where("status", "==", "pending")
+      .limit(10)
+      .get();
+    for (const doc of pendSnap.docs) {
+      const d = doc.data() as WhatsAppQueueDocument;
+      const retry = d.retryCount ?? 0;
+      const createdMs = d.createdAt?.toMillis() ?? 0;
+      // Recién creado: lo está tomando (o lo tomará) el onCreate.
+      if (now - createdMs < QUEUE_STALE_MS) continue;
+      if (retry > MAX_QUEUE_RETRY) {
+        logger.error("ALERT whatsapp_queue_stuck", {
+          event: "whatsapp_queue_stuck",
+          queueId: doc.id,
+          phoneNumber: d.phoneNumber,
+          retryCount: retry,
+          queueError: d.error ?? "unknown",
+        });
+        continue;
+      }
+      // Claim atómico: evita que dos corridas del scheduler (o el onCreate)
+      // tomen el mismo doc. Firestore aborta/reintenta la tx si el doc
+      // cambió entre el read y el commit.
+      const claimed = await db.runTransaction(async (tx) => {
+        const fresh = await tx.get(doc.ref);
+        const fd = fresh.data() as WhatsAppQueueDocument | undefined;
+        if (!fd || fd.status !== "pending") return false;
+        tx.update(doc.ref, {
+          status: "processing",
+          processedAt: Timestamp.now(),
+        });
+        return true;
+      });
+      if (!claimed) continue;
+      logger.info("reprocessPendingQueue: reprocesando", {
+        queueId: doc.id,
+        retry,
+      });
+      try {
+        await handleQueueDoc(doc, doc.id);
+      } catch (err) {
+        logger.error("reprocessPendingQueue: handleQueueDoc lanzó", {
+          queueId: doc.id,
+          err,
+        });
+      }
+    }
+  }
+);
+
+// Hard-delete de learning_log soft-deleted (rec. #4 docs/AUDIT.md). Sin
+// esto, "olvidar historial" solo marcaba `deletedAt` y los docs crecían
+// sin cota. Retención configurable por env `LEARNING_LOG_PURGE_DAYS`
+// (default 30). Best-effort: si falla, lo reintenta la corrida siguiente.
+export const purgeDeletedLearningLog = onSchedule(
+  { schedule: "every 24 hours", timeoutSeconds: 300 },
+  async () => {
+    const days = Number(process.env.LEARNING_LOG_PURGE_DAYS ?? 30);
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    try {
+      const n = await new LearningLogService().purgeSoftDeleted(cutoff);
+      logger.info(`purgeDeletedLearningLog: ${n} entradas borradas`, {
+        olderThanDays: days,
+      });
+    } catch (err) {
+      logger.error("purgeDeletedLearningLog falló", err);
+    }
   }
 );

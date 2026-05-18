@@ -9,6 +9,7 @@ import {
 import { AnthropicResponse, ExpenseData, ReceiptExtractionResult } from "../types";
 import { modelParams } from "../config/models";
 import { recordUsage, UsageContext } from "./usage.service";
+import { withRetry, isTransientError } from "../utils/retry";
 import * as logger from "firebase-functions/logger";
 
 // Fecha de hoy (Perú) para el contexto de fechas relativas del prompt.
@@ -44,15 +45,39 @@ function track(
   });
 }
 
+// Cliente SDK compartido por instancia (rec. #5 docs/AUDIT.md). Lazy: la
+// API key (secret) recién está en env en runtime.
+let sharedAnthropic: Anthropic | null = null;
+function getAnthropicClient(): Anthropic {
+  if (sharedAnthropic) return sharedAnthropic;
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new Error("Anthropic API key not configured");
+  }
+  sharedAnthropic = new Anthropic({ apiKey });
+  return sharedAnthropic;
+}
+
 export class AnthropicService {
   private client: Anthropic;
 
   constructor() {
-    const apiKey = process.env.ANTHROPIC_API_KEY;
-    if (!apiKey) {
-      throw new Error("Anthropic API key not configured");
-    }
-    this.client = new Anthropic({ apiKey });
+    this.client = getAnthropicClient();
+  }
+
+  /**
+   * messages.create con reintento ante errores transitorios (429/5xx/red).
+   * Rec. #2 docs/AUDIT.md. Al agotar reintentos relanza para que el
+   * pipeline deje el item `pending` y lo recupere reprocessPendingQueue.
+   * @param {Anthropic.MessageCreateParamsNonStreaming} params Parámetros.
+   * @param {string} label Etiqueta para los logs de reintento.
+   * @return {Promise<Anthropic.Message>} Respuesta del modelo.
+   */
+  private send(
+    params: Anthropic.MessageCreateParamsNonStreaming,
+    label: string
+  ): Promise<Anthropic.Message> {
+    return withRetry(() => this.client.messages.create(params), { label });
   }
 
   async extractReceiptData(
@@ -64,7 +89,7 @@ export class AnthropicService {
       // Prompt + parsing del paquete compartido @gastos/expense-ai
       // (single source of truth, mismo que gastos-backend web).
       const mp = modelParams("primary");
-      const response = await this.client.messages.create({
+      const response = await this.send({
         // Comprobante (vision) → tier "primary". modelParams resuelve modelo
         // + thinking/effort desde env (vía @gastos/expense-ai).
         ...mp,
@@ -86,7 +111,7 @@ export class AnthropicService {
             },
           ],
         }],
-      });
+      }, "anthropic.extractReceiptData");
 
       track(mp.model, response.usage, usageCtx, "whatsapp_receipt_ocr");
 
@@ -120,6 +145,8 @@ export class AnthropicService {
         subcategoria: parsed.subcategoria,
       };
     } catch (error) {
+      // Transitorio → propaga (el pipeline lo deja `pending` y reintenta).
+      if (isTransientError(error)) throw error;
       logger.error("Error extracting receipt data with Anthropic:", error);
       if (error instanceof Error) {
         logger.error("Error details:", {
@@ -141,7 +168,7 @@ export class AnthropicService {
       const prompt = buildVoiceExpensePrompt(message, todayLimaISO());
 
       const mp = modelParams("primary");
-      const response = await this.client.messages.create({
+      const response = await this.send({
         // Parse principal de texto → tier "primary".
         ...mp,
         max_tokens: 1024,
@@ -149,7 +176,7 @@ export class AnthropicService {
           role: "user",
           content: prompt,
         }],
-      });
+      }, "anthropic.parseExpenseMessage");
 
       track(mp.model, response.usage, usageCtx, "whatsapp_expense_parse");
 
@@ -201,6 +228,7 @@ export class AnthropicService {
         rawResponse,
       };
     } catch (error) {
+      if (isTransientError(error)) throw error;
       logger.error("Error parsing expense with Anthropic:", error);
       return {
         success: false,
@@ -242,11 +270,10 @@ export class AnthropicService {
       // tier "helper". modelParams omite output_config.effort si el modelo
       // resuelto no lo soporta (p.ej. Haiku → 400). Ver src/config/models.ts.
       const mp = modelParams("helper");
-      const response = await this.client.messages.create({
-        ...mp,
-        max_tokens: 128,
-        messages: [{ role: "user", content: prompt }],
-      });
+      const response = await this.send(
+        { ...mp, max_tokens: 128, messages: [{ role: "user", content: prompt }] },
+        "anthropic.parseRelativeDate"
+      );
 
       track(mp.model, response.usage, usageCtx, "whatsapp_date_parse");
 
@@ -283,11 +310,10 @@ export class AnthropicService {
 
       // Helper acotado → tier "helper".
       const mp = modelParams("helper");
-      const response = await this.client.messages.create({
-        ...mp,
-        max_tokens: 128,
-        messages: [{ role: "user", content: prompt }],
-      });
+      const response = await this.send(
+        { ...mp, max_tokens: 128, messages: [{ role: "user", content: prompt }] },
+        "anthropic.classifyAgainstTaxonomy"
+      );
 
       track(mp.model, response.usage, usageCtx, "whatsapp_category_classify");
 
@@ -323,11 +349,10 @@ export class AnthropicService {
 
       // Helper acotado → tier "helper".
       const mp = modelParams("helper");
-      const response = await this.client.messages.create({
-        ...mp,
-        max_tokens: 128,
-        messages: [{ role: "user", content: prompt }],
-      });
+      const response = await this.send(
+        { ...mp, max_tokens: 128, messages: [{ role: "user", content: prompt }] },
+        "anthropic.disambiguatePaymentMethod"
+      );
 
       track(
         mp.model,

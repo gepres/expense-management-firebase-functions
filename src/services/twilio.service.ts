@@ -1,21 +1,30 @@
 import * as logger from "firebase-functions/logger";
 import twilio from "twilio";
 
+// Cliente SDK compartido por instancia (rec. #5 docs/AUDIT.md): se creaba
+// uno nuevo en cada `new TwilioService()` (varias veces por mensaje) →
+// handshakes TLS y churn. Lazy: las credenciales (secrets) recién están en
+// env en runtime, no al cargar el módulo.
+let sharedClient: twilio.Twilio | null = null;
+function getTwilioClient(): twilio.Twilio {
+  if (sharedClient) return sharedClient;
+  const accountSid = process.env.TWILIO_ACCOUNT_SID;
+  const authToken = process.env.TWILIO_AUTH_TOKEN;
+  if (!accountSid || !authToken) {
+    throw new Error("Twilio credentials not configured");
+  }
+  sharedClient = twilio(accountSid, authToken);
+  return sharedClient;
+}
+
 export class TwilioService {
   private client: twilio.Twilio;
   private whatsappNumber: string;
 
   constructor() {
-    const accountSid = process.env.TWILIO_ACCOUNT_SID;
-    const authToken = process.env.TWILIO_AUTH_TOKEN;
     this.whatsappNumber =
       process.env.TWILIO_WHATSAPP_NUMBER || "whatsapp:+14155238886";
-
-    if (!accountSid || !authToken) {
-      throw new Error("Twilio credentials not configured");
-    }
-
-    this.client = twilio(accountSid, authToken);
+    this.client = getTwilioClient();
   }
 
   async sendMessage(to: string, message: string): Promise<boolean> {

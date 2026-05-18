@@ -25,6 +25,14 @@ import type {
 import { Category, PaymentMethod, LearningLogEntry } from "../types";
 import { LearningLogService } from "./learning-log.service";
 import { AnthropicService } from "./anthropic.service";
+import { TtlCache } from "../utils/ttl-cache";
+
+// Caché por instancia de la taxonomía del usuario (rec. #5 docs/AUDIT.md):
+// `getCategories`/`getPaymentMethods` se llamaban en CADA mensaje releyendo
+// la subcolección completa. TTL corto → consistencia eventual aceptable
+// (un alta en la app tarda ≤ TTL en verse por WhatsApp).
+const categoriesCache = new TtlCache<Category[]>();
+const paymentMethodsCache = new TtlCache<PaymentMethod[]>();
 
 // Re-export desde el paquete: index.ts importa `categoryIdForTerm`;
 // los tests importan `phraseMatches`/`categoryIdForTerm`. El centinela
@@ -106,6 +114,8 @@ export class InferenceService {
   }
 
   async getCategories(userId: string): Promise<Category[]> {
+    const cached = categoriesCache.get(userId);
+    if (cached) return cached;
     try {
       const snap = await this.db
         .collection("users")
@@ -116,6 +126,9 @@ export class InferenceService {
       snap.forEach((doc) => {
         categories.push({ id: doc.id, ...doc.data() } as Category);
       });
+      // No cachear `[]`: distingue "sin categorías" de un fallo de lectura
+      // y deja que el siguiente mensaje reintente.
+      if (categories.length > 0) categoriesCache.set(userId, categories);
       return categories;
     } catch (error) {
       logger.error("Error getting categories:", error);
@@ -124,6 +137,8 @@ export class InferenceService {
   }
 
   async getPaymentMethods(userId: string): Promise<PaymentMethod[]> {
+    const cached = paymentMethodsCache.get(userId);
+    if (cached) return cached;
     try {
       const snap = await this.db
         .collection("users")
@@ -134,6 +149,7 @@ export class InferenceService {
       snap.forEach((doc) => {
         methods.push({ id: doc.id, ...doc.data() } as PaymentMethod);
       });
+      if (methods.length > 0) paymentMethodsCache.set(userId, methods);
       return methods;
     } catch (error) {
       logger.error("Error getting payment methods:", error);
