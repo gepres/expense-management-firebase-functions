@@ -61,6 +61,15 @@ export class ExpenseService {
         // Defensivo: el flujo real siempre lo pasa (inferVoucherType);
         // el default evita escribir `undefined` si algún caller lo omite.
         voucherType: expenseData.voucherType ?? "boleta",
+        // Marcador para el proyector de saldo del backend. Opción A intacta:
+        // el bot NO toca saldo; el backend (dueño del ledger) debita el
+        // sub-saldo correcto —bolsillo (`cashBalance`) si `metodoPago` es
+        // efectivo, si no `bankBalance`— y pone esto en `true`. Marcador
+        // POSITIVO: los expenses web/legacy NO tienen el campo, así el
+        // sweep `balanceApplied == false` nunca los re-debita. Sin esto,
+        // un gasto en efectivo por WhatsApp no descontaba del bolsillo
+        // (ver docs/AUDIT.md "proyector de saldo").
+        balanceApplied: false,
         createdAt: now,
         updatedAt: now,
       };

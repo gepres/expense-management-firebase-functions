@@ -870,7 +870,12 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
     categoria: classification.categoria,
     descripcion: args.description,
     fecha: fechaISO,
-    metodoPago: payment.metodoPago,
+    // `metodoPago` (no `payment.metodoPago`): incluye la desambiguación
+    // (§ G.1). Antes se persistía el valor PREVIO a desambiguar mientras
+    // al usuario se le mostraba el desambiguado → método guardado ≠
+    // mostrado, y el proyector de saldo del backend enrutaba mal
+    // bolsillo/cuenta en el caso ambiguo.
+    metodoPago: metodoPago,
     moneda: currency.moneda,
     subcategoria: classification.subcategoria,
     recurrente: false,
