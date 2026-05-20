@@ -96,6 +96,8 @@ Cinco credenciales son necesarias:
 
 Resolución: `defineSecret` en `index.ts` → bindeado a la función → `process.env.<NAME>` en runtime → leído por cada service. Configurar con `firebase functions:secrets:set <NAME>` (NO `functions:config:set`, que era v1). No hardcodear nunca.
 
+**Secret opcional `CRON_SECRET`:** usado por `triggerBalanceProjection` (`src/services/balance-projector.service.ts`) para autenticar contra el endpoint `POST {BACKEND_BASE_URL}/expenses/cron/balance-run` del backend justo después de `saveExpense` → el bolsillo (`cashBalance`) se debita en ~1s en vez de esperar al cron de GitHub Actions del backend (`cron-external-balance.yml`, cada 5 min, hasta ~15 min en peor caso). **Mismo valor** que el secret `CRON_SECRET` de `gastos-backend` (el endpoint compara `Bearer === CRON_SECRET` env del backend). Bindeado a `processWhatsAppQueue` y `reprocessPendingQueue`. Si falta este secret o la var `BACKEND_BASE_URL` (`.env`), el trigger es **no-op silencioso** y el cron sigue como red de seguridad (Opción A intacta — el bot NO toca saldo, solo le pide al backend que corra el proyector).
+
 **Localmente** `.env` solo cubre params no-secret: con `defineSecret` el emulador sondea Google Cloud Secret Manager y lanza 404/warning si los secrets no existen ahí. El override local correcto es **`.secret.local`** (formato `CLAVE=valor`, mismas 5 variables; está en `.gitignore`). Crearlo copiando los valores. Editarlo y reiniciar el emulador si cambia una clave. Los secrets **no** van en `.env` (rompe el deploy v2: "Secret environment variable overlaps non secret environment variable").
 
 **Var no-secreta requerida en prod:** `TWILIO_WEBHOOK_URL` (en `.env`, bundled al deploy) = la URL **exacta** configurada en Twilio. Sin ella, en Cloud Run v2 la validación de firma falla siempre (el path se strip-ea, `req.url="/"`; ver §7 y `docs/SETUP.md` §9.1).
@@ -105,6 +107,8 @@ Resolución: `defineSecret` en `index.ts` → bindeado a la función → `proces
 **Var no-secreta opcional:** `WEBAPP_URL` (en `.env`, gitignored, bundlea al deploy) — deep-link al web app que se incluye en los mensajes guiados (dead-end sin cuenta canónica + `ingreso`/`transferir`/`movimientos` retirados). Apunta a `https://expense-app-gepres.web.app/cuentas` (ruta `ListaCuentas` del web app, `BrowserRouter`). Si falta, los mensajes dicen "(sección Cuentas)" sin link.
 
 **Var no-secreta opcional:** `LEARNING_LOG_PURGE_DAYS` (default `30`) — retención del soft-delete del `learning_log` antes del hard-delete (job `purgeDeletedLearningLog`, `onSchedule` diario, rec. #4 `docs/AUDIT.md`).
+
+**Var no-secreta opcional:** `BACKEND_BASE_URL` (en `.env`, bundled al deploy) — URL base del backend NestJS en Vercel **con prefijo `/api`** (ej. `https://<tu-backend>.vercel.app/api`). Usada por `triggerBalanceProjection` (ver §6 secret `CRON_SECRET`). Si falta, el helper hace no-op y el bolsillo se actualiza vía el cron del backend (≤5 min). El mismo valor debe estar como secret `BACKEND_BASE_URL` en GitHub Actions del repo `gastos-backend` (consistencia: ambos workflows apuntan al mismo endpoint).
 
 **Config de runtime (rec. #5 `docs/AUDIT.md`):** `setGlobalOptions` en `index.ts` fija `region: us-central1` (la MISMA implícita — NO cambiarla: recrearía las funciones y rompería la URL del webhook), `memory`, `timeoutSeconds`, `maxInstances`. Overrides por función (`twilioWebhook`, los `onSchedule`). No volver a dejar todo en defaults sin gestionar.
 

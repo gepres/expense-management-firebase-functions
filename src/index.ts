@@ -38,6 +38,7 @@ import { LearningLogService } from "./services/learning-log.service";
 import { OnboardingService } from "./services/onboarding.service";
 import { PendingActionService } from "./services/pending-action.service";
 import { TranscriptionService } from "./services/transcription.service";
+import { triggerBalanceProjection } from "./services/balance-projector.service";
 import {
   buildHelpMenu,
   buildHelpTopic,
@@ -78,6 +79,11 @@ const TWILIO_AUTH_TOKEN = defineSecret("TWILIO_AUTH_TOKEN");
 const TWILIO_WHATSAPP_NUMBER = defineSecret("TWILIO_WHATSAPP_NUMBER");
 const ANTHROPIC_API_KEY = defineSecret("ANTHROPIC_API_KEY");
 const OPENAI_API_KEY = defineSecret("OPENAI_API_KEY");
+// Secret usado por `triggerBalanceProjection` para autenticar contra el
+// endpoint del backend que dispara el proyector de saldo. Opcional: si no
+// está seteado, el helper hace no-op silencioso y el cron de GitHub Actions
+// (cada 5 min) sigue cubriendo. Ver `services/balance-projector.service.ts`.
+const CRON_SECRET = defineSecret("CRON_SECRET");
 
 /**
  * Main Cloud Function - Processes WhatsApp messages from queue
@@ -92,6 +98,7 @@ export const processWhatsAppQueue = onDocumentCreated(
       TWILIO_WHATSAPP_NUMBER,
       ANTHROPIC_API_KEY,
       OPENAI_API_KEY,
+      CRON_SECRET,
     ],
   },
   async (event) => {
@@ -901,6 +908,11 @@ async function finalizeAndRegisterExpense(args: FinalizeArgs): Promise<void> {
     await snap.ref.update({ status: "failed", error: saveResult.error });
     return;
   }
+
+  // Dispara el proyector de saldo del backend para que el bolsillo se
+  // refleje en ~1s (sin esperar al cron de GitHub Actions, ≤5 min). NO
+  // se `await`-ea: si falla, el cron lo recoge igual.
+  triggerBalanceProjection(saveResult.expenseId!);
 
   await learningLog.append(user.id, {
     expenseId: saveResult.expenseId,
@@ -1868,6 +1880,7 @@ export const reprocessPendingQueue = onSchedule(
       TWILIO_WHATSAPP_NUMBER,
       ANTHROPIC_API_KEY,
       OPENAI_API_KEY,
+      CRON_SECRET,
     ],
   },
   async () => {
