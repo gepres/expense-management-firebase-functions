@@ -184,6 +184,35 @@ export class AccountService {
     };
   }
 
+  // Bolsillo total agregado por moneda. Misma semántica que el card
+  // "Efectivo en Bolsillo" del Dashboard web (Dashboard.tsx:130-137): suma
+  // `cashBalance` de las cuentas del usuario con `status === "active"`
+  // (cuentas sin `status` cuentan como activas — compat con docs viejos).
+  // Lee crudo (no usa `mapCanonical`) para evitar inflar el tipo `Account`
+  // con la dualidad bank/cash. Devuelve `{}` si no hay cuentas o falla la
+  // lectura — el caller decide si oculta el bloque.
+  async getCashByCurrency(userId: string): Promise<Record<string, number>> {
+    try {
+      const snap = await this.db
+        .collection("accounts")
+        .where("userId", "==", userId)
+        .get();
+      const out: Record<string, number> = {};
+      for (const doc of snap.docs) {
+        const d = doc.data() as Record<string, unknown>;
+        const status = d.status as string | undefined;
+        if (status && status !== "active") continue;
+        const currency = (d.currency as string) ?? DEFAULT_MONEDA;
+        const cash = (d.cashBalance as number) ?? 0;
+        out[currency] = (out[currency] ?? 0) + cash;
+      }
+      return out;
+    } catch (error) {
+      logger.error("Error getting cash by currency:", error);
+      return {};
+    }
+  }
+
   // Cuentas reales del usuario (colección canónica, las que referencian los
   // expenses). Distinto de listByUser (modelo legacy users/{uid}/accounts).
   async listCanonical(userId: string): Promise<Account[]> {

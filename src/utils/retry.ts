@@ -47,6 +47,35 @@ const TRANSIENT_ERROR_NAMES = new Set([
  * @param {unknown} err Error a clasificar.
  * @return {boolean} true si conviene reintentar.
  */
+/**
+ * ¿El error es "saldo insuficiente" de Anthropic? La API devuelve 400 con
+ * `error.error.message` = "Your credit balance is too low …". NO es
+ * transitorio (no reintentar), pero amerita un mensaje distinto al
+ * usuario para que avise al admin en vez de creer que su gasto está mal.
+ * @param {unknown} err Error a clasificar.
+ * @return {boolean} true si Anthropic reportó saldo bajo.
+ */
+export function isLowBalanceError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as {
+    status?: number;
+    message?: string;
+    error?: { error?: { message?: string } };
+  };
+  if (e.status !== 400) return false;
+  const inner = e.error?.error?.message;
+  if (typeof inner === "string" && /credit balance is too low/i.test(inner)) {
+    return true;
+  }
+  if (
+    typeof e.message === "string" &&
+    /credit balance is too low/i.test(e.message)
+  ) {
+    return true;
+  }
+  return false;
+}
+
 export function isTransientError(err: unknown): boolean {
   if (!err || typeof err !== "object") return false;
   const e = err as {

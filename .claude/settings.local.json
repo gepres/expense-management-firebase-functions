@@ -83,7 +83,11 @@
       "PowerShell(cd D:\\\\PROYECTOS\\\\gepres\\\\gastos; npx eslint \"src/components/layout/Layout.tsx\" \"src/components/layout/MobileMenu.tsx\" 2>&1 | Select-Object -Last 12; \"EXIT=$LASTEXITCODE\")",
       "Bash(npx tsc *)",
       "Bash(pushd \"D:/PROYECTOS/gepres/gastos-backend\")",
-      "Bash(popd)"
+      "Bash(popd)",
+      "Bash(mkdir -p /tmp/expense-ai)",
+      "Bash(tar -xzf vendor/gastos-expense-ai-0.3.0.tgz -C /tmp/expense-ai)",
+      "Read(//tmp/expense-ai/package/**)",
+      "Bash(firebase functions:log --only processWhatsAppQueue --lines 100)"
     ]
   }
 }

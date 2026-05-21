@@ -9,7 +9,7 @@ import {
 import { AnthropicResponse, ExpenseData, ReceiptExtractionResult } from "../types";
 import { modelParams } from "../config/models";
 import { recordUsage, UsageContext } from "./usage.service";
-import { withRetry, isTransientError } from "../utils/retry";
+import { withRetry, isTransientError, isLowBalanceError } from "../utils/retry";
 import * as logger from "firebase-functions/logger";
 
 // Fecha de hoy (Perú) para el contexto de fechas relativas del prompt.
@@ -147,6 +147,9 @@ export class AnthropicService {
     } catch (error) {
       // Transitorio → propaga (el pipeline lo deja `pending` y reintenta).
       if (isTransientError(error)) throw error;
+      // Saldo bajo → propaga: el caller responde con mensaje de admin y
+      // marca el item `failed` (dispara la alerta whatsapp_queue_failed).
+      if (isLowBalanceError(error)) throw error;
       logger.error("Error extracting receipt data with Anthropic:", error);
       if (error instanceof Error) {
         logger.error("Error details:", {
@@ -229,6 +232,8 @@ export class AnthropicService {
       };
     } catch (error) {
       if (isTransientError(error)) throw error;
+      // Saldo bajo → propaga: ver nota en extractReceiptData.
+      if (isLowBalanceError(error)) throw error;
       logger.error("Error parsing expense with Anthropic:", error);
       return {
         success: false,

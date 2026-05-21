@@ -52,7 +52,7 @@ import {
   buildQueueDocFromTwilio,
 } from "./utils/twilio-webhook";
 import { toCsv } from "./utils/csv";
-import { isTransientError } from "./utils/retry";
+import { isTransientError, isLowBalanceError } from "./utils/retry";
 
 admin.initializeApp();
 
@@ -302,6 +302,26 @@ async function aiQuotaBlocked(
   return true;
 }
 
+// Saldo agotado en Anthropic (400 "credit balance is too low"). Marca el
+// item `failed` a propósito → dispara `whatsapp_queue_failed` para que el
+// admin reciba la alerta (no es error del usuario, sino del proveedor).
+async function handleLowBalance(
+  twilioService: TwilioService,
+  phoneNumber: string,
+  snap: FirebaseFirestore.DocumentSnapshot,
+  error: unknown
+): Promise<void> {
+  logger.error("Anthropic low balance:", error);
+  await twilioService.sendMessage(
+    phoneNumber,
+    "⚠️ El servicio de IA está temporalmente sin saldo, contacta al admin."
+  );
+  await snap.ref.update({
+    status: "failed",
+    error: "anthropic low balance",
+  });
+}
+
 /**
  * Process image messages (receipts, Yape/Plin screenshots)
  * @param {UserData} user - User data
@@ -405,6 +425,10 @@ async function processImageMessage(
     // Transitorio (429/5xx/red) → propaga: handleQueueDoc lo deja `pending`
     // y reprocessPendingQueue lo reintenta (no quemar el intento como failed).
     if (isTransientError(error)) throw error;
+    if (isLowBalanceError(error)) {
+      await handleLowBalance(twilioService, phoneNumber, snap, error);
+      return;
+    }
     logger.error("Error processing image message:", error);
     await twilioService.sendMessage(
       phoneNumber,
@@ -523,6 +547,10 @@ async function processAudioMessage(
     });
   } catch (error) {
     if (isTransientError(error)) throw error;
+    if (isLowBalanceError(error)) {
+      await handleLowBalance(twilioService, phoneNumber, snap, error);
+      return;
+    }
     logger.error("Error processing audio message:", error);
     await twilioService.sendMessage(
       phoneNumber,
@@ -692,6 +720,10 @@ async function processTextMessage(
     );
   } catch (error) {
     if (isTransientError(error)) throw error;
+    if (isLowBalanceError(error)) {
+      await handleLowBalance(twilioService, phoneNumber, snap, error);
+      return;
+    }
     logger.error("Error processing text message:", error);
     await twilioService.sendMessage(
       phoneNumber,
@@ -1614,10 +1646,28 @@ async function handleCommand(user: UserData, phoneNumber: string, command: strin
       .map(([cat, amount]) => `  • ${cat}: S/ ${amount.toFixed(2)}`)
       .join("\n");
 
+    // Bolsillo agregado por moneda (misma semántica que el card "Efectivo
+    // en Bolsillo" del Dashboard web). Solo muestra monedas con saldo ≠ 0
+    // para no ruidar; si no hay nada, omite el bloque entero. PEN → "S/"
+    // para mantener consistencia con el resto del resumen.
+    const accountService = new AccountService();
+    const cashByCurrency = await accountService.getCashByCurrency(user.id);
+    const cashEntries = Object.entries(cashByCurrency)
+      .filter(([, amt]) => amt !== 0)
+      .sort(([a], [b]) => a.localeCompare(b));
+    const fmtCurrency = (cur: string): string => cur === "PEN" ? "S/" : cur;
+    const cashBlock = cashEntries.length > 0 ?
+      "\n\n👛 *Efectivo en bolsillo:*\n" +
+        cashEntries
+          .map(([cur, amt]) => `  • ${fmtCurrency(cur)} ${amt.toFixed(2)}`)
+          .join("\n") :
+      "";
+
     const message = "📊 *Resumen de Gastos*\n\n" +
         `💰 Total: S/ ${summary.total.toFixed(2)}\n` +
         `📝 Cantidad: ${summary.count} gastos\n\n` +
-        `*Por categoría:*\n${categoryList}`;
+        `*Por categoría:*\n${categoryList}` +
+        cashBlock;
 
     await twilioService.sendMessage(phoneNumber, message);
     break;
