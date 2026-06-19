@@ -88,10 +88,11 @@ export class AnthropicService {
     try {
       // Prompt + parsing del paquete compartido @gastos/expense-ai
       // (single source of truth, mismo que gastos-backend web).
-      const mp = modelParams("primary");
+      const mp = modelParams("vision");
       const response = await this.send({
-        // Comprobante (vision) → tier "primary". modelParams resuelve modelo
-        // + thinking/effort desde env (vía @gastos/expense-ai).
+        // Comprobante (vision) → tier "vision" (aislado de "primary" para
+        // poder bajar SOLO el OCR a Haiku vía ANTHROPIC_MODEL_VISION).
+        // modelParams resuelve modelo + thinking/effort desde env.
         ...mp,
         max_tokens: 1024,
         messages: [{
